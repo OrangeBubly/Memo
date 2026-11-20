@@ -40,7 +40,8 @@ const LOOK_DEFAULTS = {
   typeWidth: 'normal', typeLines: 4, liveStats: true, combo: true, confetti: true, sound: 'studio', soundVol: 0.8, errorSound: true, sfxOn: true,
   radius: 'normal', uiScale: 1, bg: 'plain', compact: false, reduceMotion: false,
   // typing-test layout
-  tyAlign: 'left', tyVAlign: 'top', tyTyped: 'scroll', tyFlow: 'lines', tySize: 24, tyFocus: false
+  tyAlign: 'left', tyVAlign: 'top', tyTyped: 'scroll', tyFlow: 'lines', tySize: 24, tyFocus: false,
+  scrollbar: 'sleek'
 };
 function S() { return DB.settings; }
 
@@ -80,6 +81,7 @@ function applyLook() {
   b.toggle('reduce-motion', !!s.reduceMotion);
   b.toggle('no-live', !s.liveStats);
   ['plain', 'gradient', 'dots', 'grid', 'waves'].forEach(x => b.toggle('bg-' + x, s.bg === x));
+  ['sleek', 'hidden', 'classic'].forEach(x => b.toggle('sb-' + x, (s.scrollbar || 'sleek') === x));
   if (window.native?.setZoom) window.native.setZoom(s.uiScale || 1);
 }
 
@@ -452,6 +454,7 @@ function viewCustomize(main) {
         ${row('Background', seg('bgpat', [['plain', 'Plain'], ['gradient', 'Glow'], ['dots', 'Dots'], ['grid', 'Grid'], ['waves', 'Waves']], s.bg))}
         ${row('Corners', seg('radius', [['sharp', 'Sharp'], ['normal', 'Rounded'], ['round', 'Round']], s.radius))}
         ${row('Interface size', seg('uiscale', [[0.9, 'S'], [1, 'M'], [1.1, 'L'], [1.25, 'XL']], s.uiScale))}
+        ${row('Scrollbar', seg('scrollbar', [['sleek', 'Sleek'], ['hidden', 'Hidden'], ['classic', 'Classic']], s.scrollbar || 'sleek'), 'Hidden still scrolls with the wheel or touchpad')}
         ${row('Compact sidebar', tog('compact', s.compact), 'Icons only')}
         ${row('Reduce motion', tog('reducem', s.reduceMotion), 'Turn off animations')}
       </div>`,
@@ -524,7 +527,7 @@ function viewCustomize(main) {
   $$('[data-acc]').forEach(b => b.onclick = () => set('accent', b.dataset.acc, true));
   on('#acccustom', 'oninput', e => set('accent', e.target.value));
   on('#acccustom', 'onchange', () => set('accent', s.accent, true));
-  bindSeg('bgpat', 'bg'); bindSeg('radius', 'radius'); bindSeg('uiscale', 'uiScale', true);
+  bindSeg('bgpat', 'bg'); bindSeg('radius', 'radius'); bindSeg('uiscale', 'uiScale', true); bindSeg('scrollbar', 'scrollbar');
   on('#compact', 'onchange', e => set('compact', e.target.checked));
   on('#reducem', 'onchange', e => set('reduceMotion', e.target.checked));
   // Text
