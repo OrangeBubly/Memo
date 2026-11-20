@@ -127,11 +127,11 @@ function logActivity(seconds, session = false) {
 function streak() {
   let n = 0, k = todayKey();
   if (!DB.activity[k]) k = addDays(k, -1); // today not done yet: streak still alive from yesterday
-  while (DB.activity[k] && DB.activity[k].seconds > 0) { n++; k = addDays(k, -1); }
+  while (DB.activity[k] && (DB.activity[k].seconds > 0 || DB.activity[k].sessions > 0)) { n++; k = addDays(k, -1); }
   return n;
 }
 function bestStreak() {
-  const keys = Object.keys(DB.activity).filter(k => DB.activity[k].seconds > 0).sort();
+  const keys = Object.keys(DB.activity).filter(k => (DB.activity[k].seconds > 0 || DB.activity[k].sessions > 0)).sort();
   let best = 0, cur = 0, prev = null;
   for (const k of keys) { cur = prev && addDays(prev, 1) === k ? cur + 1 : 1; best = Math.max(best, cur); prev = k; }
   return best;
@@ -315,48 +315,64 @@ async function saveFile(defaultName, content, filters) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([content])); a.download = defaultName; a.click(); return true;
 }
 
-// ---------- Text detail ----------
+// ---------- Text hub (pick a part + a mode) ----------
+const RING_C = 2 * Math.PI * 52;
+function ringHtml(pct, icon, big = false) {
+  return `<div class="ring ${pct >= 100 ? 'done' : ''} ${big ? 'big' : ''}">
+    <svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52"/>
+      <circle class="fill" cx="60" cy="60" r="52" transform="rotate(-90 60 60)" stroke-dasharray="${RING_C}" stroke-dashoffset="${RING_C}" data-pct="${pct}"/></svg>
+    <span class="ic">${icon}</span>${pct >= 100 ? '<span class="check">✓</span>' : ''}</div>`;
+}
+function animateRings(root) {
+  requestAnimationFrame(() => requestAnimationFrame(() =>
+    $$('.ring .fill', root).forEach(c => c.style.strokeDashoffset = RING_C * (1 - clamp(+c.dataset.pct, 0, 100) / 100))));
+}
+
 function viewText(main) {
   const t = getText(state.textId); if (!t) return go('library');
   const P = parseText(t.body);
+  if (state.scope !== 'all' && state.scope >= P.sections.length) state.scope = 'all';
+  const prog = modeProgress(t);
   const recent = t.sessions.slice(-8).reverse();
+  const groupPct = g => Math.round(g.modes.reduce((a, m) => a + (prog[m] || 0), 0) / g.modes.length);
   main.innerHTML = `
-    <div class="row"><button class="btn small" id="back">← Library</button></div>
-    <div class="row" style="margin-top:14px"><div><h1>${esc(t.title)}</h1>
-      <div class="sub">${t.author ? esc(t.author) + ' · ' : ''}${P.words.length} words · ${P.sections.length} parts${t.folder ? ' · 📁 ' + esc(t.folder) : ''}</div></div>
-      <span class="spacer"></span>
-      <button class="btn" id="edit">✎ Edit</button>
-      <button class="btn" id="dup">⧉ Duplicate</button>
-      <button class="btn" id="exp">⬇ Export</button>
-      <button class="btn danger" id="del">🗑 Delete</button>
+    <div class="row"><button class="btn small" id="back">← Library</button><span class="spacer"></span>
+      <button class="btn small" id="edit">✎ Edit</button>
+      <button class="btn small" id="dup">⧉ Duplicate</button>
+      <button class="btn small" id="exp">⬇ Export</button>
+      <button class="btn small danger" id="del">🗑 Delete</button></div>
+    <div class="hub-head">
+      ${ringHtml(t.mastery, `<b>${t.mastery}%</b>`, true)}
+      <div><h1>${esc(t.title)}</h1>
+        <div class="sub" style="margin:0">${t.author ? esc(t.author) + ' · ' : ''}${P.words.length} words · ${P.sections.length} part${P.sections.length === 1 ? '' : 's'}
+          · next review ${t.nextReview ? (isDue(t) ? '<b style="color:var(--accent)">today</b>' : fmtDate(t.nextReview)) : '—'}</div></div>
     </div>
-    <div class="kpis">
-      <div class="card kpi"><div class="v">${t.mastery}%</div><div class="l">Mastery</div></div>
-      <div class="card kpi"><div class="v">${t.sessions.length}</div><div class="l">Practice sessions</div></div>
-      <div class="card kpi"><div class="v">${t.nextReview ? (isDue(t) ? 'Today' : fmtDate(t.nextReview)) : '—'}</div><div class="l">Next review</div></div>
-      <div class="card kpi"><div class="v">${fmtMin(t.sessions.reduce((a, s) => a + s.seconds, 0))}</div><div class="l">Time practiced</div></div>
+    ${P.sections.length > 1 ? `<div class="part-bar">
+      <button class="chip ${state.scope === 'all' ? 'active' : ''}" data-s="all">Whole text</button>
+      ${P.sections.map((s, i) => `<button class="chip ${state.scope === i ? 'active' : ''}" data-s="${i}" title="${esc(s.lines[0]?.text)}">Part ${i + 1}</button>`).join('')}
+      <label class="row" style="gap:4px;font-size:13px;margin-left:8px" title="Practice parts 1 through the selected part together">
+        <input type="checkbox" id="cum" ${state.cumulative ? 'checked' : ''} ${state.scope === 'all' ? 'disabled' : ''}> Build up from part 1</label>
     </div>
-    <div class="row"><button class="btn primary" id="practice">▶ Practice whole text</button>
-      <button class="btn" id="listen">🔊 Listen</button>
-      <button class="btn" id="test">⌨ Test me</button></div>
+    ${state.scope !== 'all' ? `<div class="part-preview">${esc(scopeInfo(P).secs.map(s => s.lines.map(l => l.text).join(' / ')).join('  ·  ').slice(0, 180))}…</div>` : ''}` : ''}
+    <div class="groups">${GROUPS.map((g, gi) => `
+      <div class="group">
+        <div class="group-head"><span class="step">${gi + 1}</span><div><div class="gt">${g.title}</div><div class="gs">${g.sub}</div></div>
+          <span class="spacer"></span><span class="gp">${groupPct(g)}%</span></div>
+        ${g.modes.map(m => `<button class="mode-tile" data-m="${m}" title="${esc(MODES[m].tip)}">
+          ${ringHtml(prog[m] || 0, MODES[m].icon)}
+          <div class="mt-text"><div class="mt-name">${MODES[m].name}</div><div class="mt-pct">${prog[m] || 0}%</div></div></button>`).join('')}
+      </div>`).join('')}</div>
     ${t.notes ? `<h2>Notes</h2><div class="card" style="white-space:pre-wrap">${esc(t.notes)}</div>` : ''}
-    <h2>Parts</h2>
-    <div class="card"><table class="list"><tr><th>#</th><th>Begins</th><th>Words</th><th>Mastery</th><th></th></tr>
-      ${P.sections.map((s, i) => `<tr><td>${i + 1}</td><td>${esc(s.lines[0]?.text.slice(0, 70))}${(s.lines[0]?.text.length || 0) > 70 ? '…' : ''}</td>
-        <td>${s.lines.reduce((a, l) => a + l.wordIdx.length, 0)}</td><td>${t.sectionMastery[i] ?? 0}%</td>
-        <td style="text-align:right"><button class="btn small" data-sec="${i}">Practice</button> <button class="btn small" data-cum="${i}" ${i ? '' : 'disabled'} title="Parts 1 to ${i + 1}">Build up</button></td></tr>`).join('')}
-    </table></div>
     <h2>Recent sessions</h2>
     ${recent.length ? `<div class="card"><table class="list"><tr><th>Date</th><th>Mode</th><th>Scope</th><th>Score</th><th>Time</th></tr>
       ${recent.map(s => `<tr><td>${fmtDate(s.date)}</td><td>${esc(MODES[s.mode]?.label || s.mode)}</td><td>${esc(s.scope || 'Whole text')}</td><td>${s.score}%</td><td>${fmtMin(s.seconds)}</td></tr>`).join('')}</table></div>`
-      : '<div class="sub">No sessions yet — start practicing!</div>'}`;
+      : '<div class="sub">No sessions yet — start with the first column and work your way right.</div>'}`;
+  animateRings(main);
   $('#back').onclick = () => go('library');
   $('#edit').onclick = () => go('edit');
-  $('#practice').onclick = () => go('practice', { mode: 'read', scope: 'all', cumulative: false });
-  $('#listen').onclick = () => go('practice', { mode: 'read', scope: 'all', cumulative: false, autoplay: true });
-  $('#test').onclick = () => go('practice', { mode: 'type', scope: 'all', cumulative: false });
-  $$('[data-sec]').forEach(b => b.onclick = () => go('practice', { mode: 'read', scope: +b.dataset.sec, cumulative: false }));
-  $$('[data-cum]').forEach(b => b.onclick = () => go('practice', { mode: 'read', scope: +b.dataset.cum, cumulative: true }));
+  $$('.part-bar .chip').forEach(c => c.onclick = () => go('text', { scope: c.dataset.s === 'all' ? 'all' : +c.dataset.s, cumulative: c.dataset.s === 'all' ? false : state.cumulative }));
+  $('#cum')?.addEventListener('change', e => go('text', { cumulative: e.target.checked }));
+  $$('.mode-tile').forEach(b => b.onclick = () => go('practice', { mode: b.dataset.m }));
   $('#dup').onclick = () => { const c = newText({ title: t.title + ' (copy)', author: t.author, folder: t.folder, body: t.body, notes: t.notes }); DB.texts.push(c); save(); go('text', { textId: c.id }); toast('Duplicated'); };
   $('#exp').onclick = () => saveFile(t.title.replace(/[\\/:*?"<>|]/g, '_') + '.txt', `${t.title}\n${t.author ? t.author + '\n' : ''}\n${t.body}\n`, [{ name: 'Text', extensions: ['txt'] }]).then(r => r && toast('Exported'));
   $('#del').onclick = async () => {
@@ -422,57 +438,62 @@ function speak(str, { onBoundary, onEnd, rate } = {}) {
 
 // ---------- Practice ----------
 const MODES = {
-  read: { label: '📖 Read & Listen', tip: 'Read the text and listen to it read aloud. Words light up as they are spoken.' },
-  initials: { label: '🔤 First Letters', tip: 'Only the first letter of each word is shown. Recite it, then click any word to check.' },
-  hide: { label: '🙈 Hide Words', tip: 'Hide more and more words as you improve. Click a hidden word to peek at it.' },
-  type: { label: '⌨ Type Initials', tip: 'Type the first letter of each word, from memory. Wrong letters are counted as mistakes.' },
-  typefull: { label: '✍ Type Words', tip: 'Type each full word from memory. Press space or Enter after each word.' },
-  lines: { label: '🃏 Line Cards', tip: 'See one line, recall the next, then reveal and grade yourself.' },
-  scramble: { label: '🔀 Unscramble', tip: 'The lines are shuffled — pick them in the right order.' },
-  quiz: { label: '❓ Fill the Blank', tip: 'Pick the missing word from four choices.' },
-  recite: { label: '🎙 Recite & Record', tip: 'Recite out loud while recording yourself, then play it back and check against the text.' }
+  read: { icon: '📖', name: 'Read & Listen', tip: 'Read the text and listen to it read aloud. Words light up as they are spoken.' },
+  initials: { icon: '🔤', name: 'First Letters', tip: 'Only the first letter of each word is shown. Recite it, then click any word to check.' },
+  hide: { icon: '🙈', name: 'Hide Words', tip: 'Hide more and more words as you improve. Click a hidden word to peek at it.' },
+  quiz: { icon: '❓', name: 'Fill the Blank', tip: 'Pick the missing word from four choices.' },
+  scramble: { icon: '🔀', name: 'Unscramble', tip: 'The lines are shuffled — pick them in the right order.' },
+  lines: { icon: '🃏', name: 'Line Cards', tip: 'See one line, recall the next, then reveal and grade yourself.' },
+  type: { icon: '⌨️', name: 'Type Initials', tip: 'Type the first letter of each word, from memory.' },
+  typefull: { icon: '✍️', name: 'Type Words', tip: 'Type every word in full, from memory. Space moves to the next word.' },
+  recite: { icon: '🎙️', name: 'Recite & Record', tip: 'Recite out loud while recording yourself, then play it back and check against the text.' }
 };
+for (const m of Object.values(MODES)) m.label = `${m.icon} ${m.name}`;
+const GROUPS = [
+  { title: 'Familiarize', sub: 'Get to know the text', modes: ['read', 'initials', 'hide'] },
+  { title: 'Practice', sub: 'Strengthen your recall', modes: ['quiz', 'scramble', 'lines'] },
+  { title: 'Test', sub: 'Prove you know it by heart', modes: ['type', 'typefull', 'recite'] }
+];
+const MODE_ORDER = GROUPS.flatMap(g => g.modes);
+
+const scopeKey = () => state.scope === 'all' ? 'all' : (state.cumulative && state.scope > 0 ? 'c' : 'p') + state.scope;
+const modeProgress = (t) => (t.modeProgress ||= {})[scopeKey()] || {};
+function setModeProgress(t, mode, score) {
+  const all = t.modeProgress ||= {}; const m = all[scopeKey()] ||= {};
+  m[mode] = Math.max(m[mode] || 0, Math.round(clamp(score, 0, 1) * 100)); save();
+}
 
 function scopeInfo(P) {
   const n = P.sections.length;
   if (state.scope === 'all' || state.scope >= n) return { secs: P.sections, label: 'Whole text', key: null };
-  if (state.cumulative) return { secs: P.sections.slice(0, state.scope + 1), label: `Parts 1–${state.scope + 1}`, key: null };
+  if (state.cumulative && state.scope > 0) return { secs: P.sections.slice(0, state.scope + 1), label: `Parts 1–${state.scope + 1}`, key: null };
   return { secs: [P.sections[state.scope]], label: `Part ${state.scope + 1}`, key: state.scope };
 }
 
 function viewPractice(main) {
   const t = getText(state.textId); if (!t) return go('library');
   const P = parseText(t.body);
+  const scope = scopeInfo(P);
+  const M = MODES[state.mode];
+  const gi = GROUPS.findIndex(g => g.modes.includes(state.mode));
   main.innerHTML = `
     <div class="practice-head">
       <button class="btn small" id="back">← ${esc(t.title)}</button>
+      <div class="ph-title"><span class="ph-icon">${M.icon}</span><div><div class="ph-name">${M.name}</div>
+        <div class="ph-sub">${GROUPS[gi].title} · ${esc(scope.label)}</div></div></div>
       <span class="spacer"></span>
-      <label class="row" style="gap:6px;font-size:14px">Part
-        <select id="scope"><option value="all">Whole text</option>
-          ${P.sections.map((s, i) => `<option value="${i}" ${state.scope === i ? 'selected' : ''}>Part ${i + 1}: ${esc(s.lines[0]?.text.slice(0, 32))}</option>`).join('')}
-        </select></label>
-      <label class="row" style="gap:4px;font-size:14px" title="Practice all parts up to the selected one"><input type="checkbox" id="cum" ${state.cumulative ? 'checked' : ''}> Build up</label>
-      <button class="btn small" id="prevp" title="Previous part">◀</button><button class="btn small" id="nextp" title="Next part">▶</button>
     </div>
-    <div class="modes">${Object.entries(MODES).map(([k, m]) => `<button class="mode-btn ${state.mode === k ? 'active' : ''}" data-m="${k}" title="${esc(m.tip)}">${m.label}</button>`).join('')}</div>
-    <div class="sub" style="margin-bottom:10px">${esc(MODES[state.mode].tip)}</div>
+    <div class="sub" style="margin-bottom:14px">${esc(M.tip)}</div>
     <div id="stage"></div>`;
   $('#back').onclick = () => go('text');
-  $('#scope').value = String(state.scope);
-  $('#scope').onchange = e => go('practice', { scope: e.target.value === 'all' ? 'all' : +e.target.value });
-  $('#cum').onchange = e => go('practice', { cumulative: e.target.checked });
-  const step = d => { const cur = state.scope === 'all' ? -1 : state.scope; const nx = clamp(cur + d, 0, P.sections.length - 1); go('practice', { scope: nx }); };
-  $('#prevp').onclick = () => step(-1); $('#nextp').onclick = () => step(1);
-  $$('.mode-btn').forEach(b => b.onclick = () => go('practice', { mode: b.dataset.m }));
 
   // time tracking while practicing
   let last = Date.now();
   const tick = setInterval(() => { if (document.hasFocus()) logActivity((Date.now() - last) / 1000); last = Date.now(); }, 5000);
   cleanup.push(() => { clearInterval(tick); if (document.hasFocus()) logActivity((Date.now() - last) / 1000); });
 
-  const scope = scopeInfo(P);
   const ctx = { t, P, scope, stage: $('#stage'), started: Date.now(),
-    finish(score, extra = '') { const secs = (Date.now() - this.started) / 1000; recordSession(t, state.mode, score, secs, scope.label, scope.key); showDone(this, score, extra); } };
+    finish(score, extra = '', html = '') { const secs = (Date.now() - this.started) / 1000; recordSession(t, state.mode, score, secs, scope.label, scope.key); setModeProgress(t, state.mode, score); showDone(this, score, extra, html); } };
   PRACTICE[state.mode](ctx);
 }
 
@@ -488,19 +509,20 @@ function renderReading(ctx, cls) {
 }
 function setKeyHandler(fn) { window.addEventListener('keydown', fn); cleanup.push(() => window.removeEventListener('keydown', fn)); }
 
-function showDone(ctx, score, extra) {
+function showDone(ctx, score, extra, html = '') {
   const pct = Math.round(score * 100);
   const msg = pct >= 95 ? 'Perfect! You know this by heart. 🎉' : pct >= 80 ? 'Great job! Almost there.' : pct >= 50 ? 'Good progress — keep going.' : 'Keep practicing — it gets easier every time.';
-  ctx.stage.insertAdjacentHTML('afterbegin', `<div class="card done-box" id="donebox"><div class="big">${pct}%</div><div style="font-size:18px;margin:8px 0">${msg}</div>
+  const nextMode = MODE_ORDER[MODE_ORDER.indexOf(state.mode) + 1];
+  ctx.stage.insertAdjacentHTML('afterbegin', `<div class="card done-box" id="donebox">
+    ${html || `<div class="big">${pct}%</div>`}<div style="font-size:18px;margin:8px 0">${msg}</div>
     <div class="sub">${extra} Mastery now ${ctx.t.mastery}% · next review ${fmtDate(ctx.t.nextReview)}</div>
     <div class="row" style="justify-content:center"><button class="btn primary" id="again">↻ Try again</button>
-    ${state.scope !== 'all' && state.scope < ctx.P.sections.length - 1 ? '<button class="btn" id="nextpart">Next part ▶</button>' : ''}
-    <button class="btn" id="harder">Harder mode ⬆</button></div></div>`);
+    ${nextMode ? `<button class="btn" id="nextmode">Next: ${MODES[nextMode].label} →</button>` : ''}
+    <button class="btn" id="hub">All modes</button></div></div>`);
   $('#again').onclick = () => go('practice');
-  $('#nextpart')?.addEventListener('click', () => go('practice', { scope: state.scope + 1 }));
-  const order = ['read', 'initials', 'hide', 'quiz', 'scramble', 'lines', 'type', 'typefull', 'recite'];
-  $('#harder').onclick = () => go('practice', { mode: order[Math.min(order.indexOf(state.mode) + 1, order.length - 1)] });
-  ctx.stage.scrollIntoView({ behavior: 'smooth' });
+  $('#nextmode')?.addEventListener('click', () => go('practice', { mode: nextMode }));
+  $('#hub').onclick = () => go('text');
+  $('#main').scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 const PRACTICE = {
@@ -521,7 +543,8 @@ const PRACTICE = {
       <div class="sub" style="margin-top:10px">Tip: click any word to start listening from there.</div>`;
     const spans = new Map($$('.w', stage).map(s => [+s.dataset.w, s]));
     let playing = false;
-    const hl = (wi) => { $$('.w.speaking', stage).forEach(s => s.classList.remove('speaking')); spans.get(wi)?.classList.add('speaking'); };
+    const total = offs.length; let furthest = 0;
+    const hl = (wi) => { $$('.w.speaking', stage).forEach(s => s.classList.remove('speaking')); const el = spans.get(wi); if (el) { el.classList.add('speaking'); furthest = Math.max(furthest, offs.findIndex(o => o[1] === wi) + 1); } };
     const playFrom = (charStart = 0) => {
       playing = true; $('#play').textContent = '⏸ Pause';
       const lbl = $('#lbl').checked;
@@ -535,7 +558,7 @@ const PRACTICE = {
         onEnd: () => { if (!playing) return; if (segEnd < str.length) { setTimeout(() => playing && playFrom(segEnd), lbl ? 1500 : 0); } else end(); }
       });
     };
-    const end = () => { hl(-1); if ($('#loop')?.checked && playing) return playFrom(0); playing = false; const p = $('#play'); if (p) p.textContent = '▶ Listen'; };
+    const end = () => { hl(-1); if (playing) { setModeProgress(ctx.t, 'read', 1); furthest = 0; } if ($('#loop')?.checked && playing) return playFrom(0); playing = false; const p = $('#play'); if (p) p.textContent = '▶ Listen'; };
     $('#play').onclick = () => {
       if (playing && speechSynthesis.speaking && !speechSynthesis.paused) { speechSynthesis.pause(); $('#play').textContent = '▶ Resume'; }
       else if (speechSynthesis.paused) { speechSynthesis.resume(); $('#play').textContent = '⏸ Pause'; }
@@ -546,8 +569,8 @@ const PRACTICE = {
     stage.querySelector('.reading').addEventListener('click', e => {
       const w = e.target.closest('.w'); if (!w) return; const o = offs.find(x => x[1] === +w.dataset.w); if (o) playFrom(o[0]);
     });
-    $('#mark').onclick = () => { logActivity(0, true); ctx.t.lastPracticed = todayKey(); save(); toast('Nice — now try First Letters or Hide Words'); };
-    cleanup.push(() => { playing = false; stopSpeech(); });
+    $('#mark').onclick = () => { logActivity(0, true); ctx.t.lastPracticed = todayKey(); setModeProgress(ctx.t, 'read', 1); save(); toast('Nice — now try First Letters'); go('text'); };
+    cleanup.push(() => { playing = false; stopSpeech(); if (furthest) setModeProgress(ctx.t, 'read', furthest / total); });
     if (state.autoplay) { state.autoplay = false; setTimeout(() => playFrom(0), 300); }
   },
 
@@ -777,74 +800,213 @@ function selfGrade(ctx, hintScore) {
 }
 
 // Shared typing engine for "Type Initials" and "Type Words".
+// Smooth gliding caret, per-letter coloring, live WPM/accuracy, auto-scrolling lines.
+const foldCh = (c) => c.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[’‘`]/g, "'").replace(/[–—‐]/g, '-');
+function chEq(typed, target) {
+  if (DB.settings.strictTyping) return foldCh(typed) === foldCh(target);
+  return foldCh(typed).toLowerCase() === foldCh(target).toLowerCase();
+}
+
 function typingMode(ctx, full) {
   const { P, scope, stage } = ctx;
   const ws = scopeWords(scope);
-  const st = new Map(); // word -> 'ok' | 'err'
-  let pos = 0, mistakes = 0, wrongHere = 0, hintOn = DB.settings.typeHints;
-  stage.innerHTML = `<div class="toolbar">
-      <label class="row" style="gap:4px"><input type="checkbox" id="hint" ${hintOn ? 'checked' : ''}> Show first-letter hints</label>
-      <button class="btn" id="giveup">💡 Reveal word <span class="kbd">${full ? 'Tab' : '?'}</span></button>
-      <button class="btn" id="restart">↻ Restart</button>
-      <span class="spacer"></span><span class="sub" style="margin:0">${full ? 'Type each word, then Space' : 'Type the first letter of each word'}</span></div>
-    ${full ? '<input id="tin" class="" style="width:100%;font-size:20px;margin-bottom:12px" placeholder="Type here…" autocomplete="off" spellcheck="false">' : ''}
-    <div id="rd" tabindex="0" style="outline:none"></div>
-    <div class="stats-bar"><span>Progress <b id="sp">0</b>/${ws.length}</span><span>Mistakes <b id="sm">0</b></span><span>Accuracy <b id="sa">100%</b></span></div>`;
-  const draw = () => {
-    $('#rd').innerHTML = renderReading(ctx, w => {
-      const i = ws.indexOf(w);
-      if (st.has(w)) return st.get(w);
-      return 'future' + (hintOn ? ' hint' : '') + (i === pos ? ' cur' : '');
-    });
-    $('#sp').textContent = pos; $('#sm').textContent = mistakes;
-    $('#sa').textContent = Math.round(Math.max(0, pos - [...st.values()].filter(v => v === 'err').length) / Math.max(1, pos) * 100) + '%';
-    $('.w.cur', stage)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  };
-  const advance = (res) => {
-    st.set(ws[pos], res); pos++; wrongHere = 0;
-    if (pos >= ws.length) {
-      draw(); const errs = [...st.values()].filter(v => v === 'err').length;
-      ctx.finish(Math.max(0, (ws.length - errs - Math.max(0, mistakes - errs) * 0.25) / ws.length), `${errs} word${errs === 1 ? '' : 's'} missed, ${mistakes} wrong key${mistakes === 1 ? '' : 's'}.`);
-      return true;
-    }
-    draw(); return false;
-  };
-  const wrong = () => {
-    mistakes++; wrongHere++;
-    const cur = $('.w.cur', stage); cur?.classList.add('err'); setTimeout(() => cur?.classList.remove('err'), 250);
-    if (wrongHere >= 3) advance('err'); else { $('#sm').textContent = mistakes; }
-  };
-  $('#hint').onchange = e => { hintOn = e.target.checked; DB.settings.typeHints = hintOn; save(); draw(); };
-  $('#restart').onclick = () => go('practice');
-  $('#giveup').onclick = () => { if (pos < ws.length) { mistakes++; advance('err'); } (full ? $('#tin') : $('#rd')).focus(); };
+  const W = (p) => P.words[ws[p]].s;
+  const typed = ws.map(() => '');
+  const res = ws.map(() => null); // null | 'ok' | 'err'
+  let pos = 0, wrongHere = 0, keys = 0, goodKeys = 0, mistakes = 0, startT = 0, ended = false;
+  const timeline = [];
+  const VIS = [['hidden', 'Hidden'], ['initials', 'First letters'], ['faint', 'Show text']];
+  let vis = DB.settings.typeVis || 'hidden';
 
-  if (!full) {
-    setKeyHandler(e => {
-      if (pos >= ws.length || e.ctrlKey || e.altKey || e.metaKey) return;
-      if (e.target.tagName === 'INPUT' && e.target.type !== 'checkbox') return;
-      if (e.key === '?') { e.preventDefault(); mistakes++; advance('err'); return; }
-      const k = norm(e.key); if (k.length !== 1) return;
-      e.preventDefault();
-      if (k === P.words[ws[pos]].n[0]) advance(wrongHere ? 'err' : 'ok'); else wrong();
-    });
-    $('#rd').focus();
-  } else {
-    const tin = $('#tin');
-    const check = (final) => {
-      const typed = norm(tin.value); if (!typed) return;
-      const target = P.words[ws[pos]].n;
-      const ok = DB.settings.strictTyping ? tin.value.trim() === P.words[ws[pos]].s : typed === target;
-      if (ok) { tin.value = ''; advance(wrongHere ? 'err' : 'ok'); }
-      else if (final) { wrong(); tin.select(); }
-    };
-    tin.addEventListener('input', () => { if (/\s$/.test(tin.value)) check(true); });
-    tin.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); check(true); }
-      if (e.key === 'Tab') { e.preventDefault(); if (pos < ws.length) { mistakes++; tin.value = ''; advance('err'); } }
-    });
-    tin.focus();
+  // Build text: each word is a span of letter spans; separators show once the preceding word is done.
+  let p = 0, prevP = -1;
+  const body = scope.secs.map((s, si) => (si ? '<div class="ty-gap"></div>' : '') + s.lines.map(l => `<div class="ty-line">${l.tokens.map(tk => {
+    if (tk.sep != null) return `<span class="ts ${prevP < 0 ? 'on' : ''}" data-after="${prevP}">${esc(tk.sep)}</span>`;
+    const me = p++; prevP = me;
+    return `<span class="tw" data-p="${me}"></span>`;
+  }).join('')}</div>`).join('')).join('');
+
+  stage.innerHTML = `
+    <div class="ty-top">
+      <div class="ty-live"><span class="tl-v" id="twpm">0</span><span class="tl-l">wpm</span>
+        <span class="tl-v" id="tacc">100%</span><span class="tl-l">acc</span>
+        <span class="tl-v" id="tprog">0/${ws.length}</span><span class="tl-l">words</span>
+        <span class="tl-v" id="ttime">0:00</span></div>
+      <span class="spacer"></span>
+      <div class="seg" id="vis">${VIS.map(([v, l]) => `<button data-v="${v}" class="${vis === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <button class="btn small" id="restart">↻ Restart <span class="kbd">Esc</span></button>
+    </div>
+    <div class="ty-bar"><div id="tbar"></div></div>
+    <div class="typer" id="typer" data-vis="${vis}" tabindex="0">
+      <div class="ty-inner" id="tinner">${body}<div class="caret idle" id="caret"></div></div>
+    </div>
+    <div class="ty-help">${full
+      ? '<span class="kbd">space</span> next word · <span class="kbd">backspace</span> fix · <span class="kbd">ctrl+backspace</span> clear word · <span class="kbd">tab</span> reveal word'
+      : 'type the <b>first letter</b> of each word · <span class="kbd">tab</span> reveal word'}</div>`;
+
+  const typer = $('#typer'), inner = $('#tinner'), caret = $('#caret');
+  const wordEl = $$('.tw', inner);
+
+  function renderWord(i) {
+    const target = W(i), t = typed[i], done = res[i] != null, cur = i === pos && !ended;
+    let h = '';
+    if (!full) {
+      const cls = done ? (res[i] === 'ok' ? 'ok' : 'bad') : 'u';
+      for (let k = 0; k < target.length; k++) h += `<span class="l ${cls}${k ? '' : ' f0'}">${esc(target[k])}</span>`;
+    } else if (done && res[i] === 'err') {
+      // finished but wrong: reveal the correct word in red so it can be learned
+      for (let k = 0; k < target.length; k++) h += `<span class="l ${k < t.length && chEq(t[k], target[k]) ? 'ok' : 'bad'}">${esc(target[k])}</span>`;
+    } else {
+      // while typing, a wrong letter shows what was typed — never the answer
+      for (let k = 0; k < target.length; k++) {
+        if (k < t.length) h += `<span class="l ${chEq(t[k], target[k]) ? 'ok' : 'bad'}">${esc(chEq(t[k], target[k]) ? target[k] : t[k])}</span>`;
+        else h += `<span class="l u${k ? '' : ' f0'}">${esc(target[k])}</span>`;
+      }
+      for (let k = target.length; k < t.length; k++) h += `<span class="l extra">${esc(t[k])}</span>`;
+    }
+    const el = wordEl[i];
+    el.title = done && res[i] === 'err' && t ? `you typed “${t}”` : '';
+    el.innerHTML = h;
+    el.className = 'tw' + (done && res[i] === 'err' ? ' err' : '') + (cur ? ' cur' : '') + (done && !full ? ' pop' : '');
   }
-  draw();
+
+  let caretIdleT;
+  function moveCaret(instant) {
+    if (ended) { caret.style.opacity = 0; return; }
+    const el = wordEl[pos]; if (!el) return;
+    const letters = $$('.l', el);
+    const idx = full ? typed[pos].length : 0;
+    const ir = inner.getBoundingClientRect();
+    let r, x;
+    if (idx < letters.length) { r = letters[idx].getBoundingClientRect(); x = r.left; }
+    else { r = letters[letters.length - 1].getBoundingClientRect(); x = r.right; }
+    const y = r.top - ir.top;
+    caret.style.transition = instant ? 'none' : '';
+    caret.style.height = r.height + 'px';
+    caret.style.transform = `translate(${x - ir.left - 1}px, ${y}px)`;
+    // keep the caret's line as the second visible line
+    const lh = r.height * 1.1;
+    const curOffset = -(parseFloat(inner.dataset.off) || 0);
+    const want = Math.max(0, y - lh);
+    if (Math.abs(want - curOffset) > 2) { inner.dataset.off = -want; inner.style.transform = `translateY(${-want}px)`; }
+    caret.classList.remove('idle'); clearTimeout(caretIdleT); caretIdleT = setTimeout(() => caret.classList.add('idle'), 600);
+  }
+
+  const fmtT = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  const wpmNow = () => { const mins = (Date.now() - startT) / 60000; return startT && mins > 0.02 ? Math.round(res.filter(r => r === 'ok').length / mins) : 0; };
+  function updateStats() {
+    $('#twpm').textContent = wpmNow();
+    $('#tacc').textContent = (keys ? Math.round(goodKeys / keys * 100) : 100) + '%';
+    $('#tprog').textContent = `${pos}/${ws.length}`;
+    $('#tbar').style.width = (pos / ws.length * 100) + '%';
+  }
+  const clock = setInterval(() => {
+    if (!startT || ended) return;
+    const s = (Date.now() - startT) / 1000; $('#ttime').textContent = fmtT(s);
+    if (Math.floor(s) > timeline.length) timeline.push(wpmNow());
+    $('#twpm').textContent = wpmNow();
+  }, 250);
+  cleanup.push(() => clearInterval(clock));
+
+  function showSeps(i) { $$(`.ts[data-after="${i}"]`, inner).forEach(s => s.classList.add('on')); }
+
+  function submit(result) {
+    res[pos] = result; showSeps(pos); renderWord(pos);
+    pos++; wrongHere = 0;
+    if (pos >= ws.length) return finish();
+    renderWord(pos); updateStats(); moveCaret();
+  }
+
+  function finish() {
+    ended = true; caret.style.opacity = 0; updateStats();
+    const secs = Math.max(1, (Date.now() - (startT || Date.now())) / 1000);
+    const ok = res.filter(r => r === 'ok').length;
+    const wpm = Math.round(ok / (secs / 60));
+    const acc = keys ? Math.round(goodKeys / keys * 100) : 100;
+    timeline.push(wpm);
+    // Results: show the whole text with mistakes highlighted.
+    typer.classList.add('ended'); inner.style.transform = 'none'; inner.dataset.off = 0;
+    $$('.ty-top, .ty-bar, .ty-help', stage).forEach(el => el.classList.add('hidden'));
+    const errs = ws.length - ok;
+    const score = full ? ok / ws.length : Math.max(0, (ok - Math.max(0, mistakes - errs) * 0.25) / ws.length);
+    const maxW = Math.max(10, ...timeline);
+    const pts = timeline.map((v, i) => `${timeline.length > 1 ? i / (timeline.length - 1) * 300 : 150},${60 - v / maxW * 55}`).join(' ');
+    const html = `<div class="ty-result">
+        <div><div class="rv">${wpm}</div><div class="rl">wpm</div></div>
+        <div><div class="rv">${acc}%</div><div class="rl">accuracy</div></div>
+        <div><div class="rv">${ok}/${ws.length}</div><div class="rl">words right</div></div>
+        <div><div class="rv">${fmtT(secs)}</div><div class="rl">time</div></div>
+        <svg class="ty-chart" viewBox="0 0 300 62" preserveAspectRatio="none"><polyline points="${pts}"/></svg>
+      </div><div class="big" style="font-size:36px">${Math.round(score * 100)}%</div>`;
+    ctx.finish(score, `${errs} word${errs === 1 ? '' : 's'} missed, ${mistakes} wrong key${mistakes === 1 ? '' : 's'}.`, html);
+  }
+
+  function reveal() { if (ended) return; mistakes++; if (!startT) startT = Date.now(); typed[pos] = full ? typed[pos] : ''; submit('err'); }
+
+  function shake() {
+    const el = wordEl[pos]; el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake');
+  }
+
+  setKeyHandler(e => {
+    if (ended) return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.key === 'Escape') { e.preventDefault(); return go('practice'); }
+    if (e.key === 'Tab') { e.preventDefault(); return reveal(); }
+    if (e.altKey || e.metaKey) return;
+    const target = W(pos);
+
+    if (!full) {
+      if (e.ctrlKey || e.key.length !== 1 || !/[\p{L}\p{N}]/u.test(e.key)) return;
+      e.preventDefault();
+      if (!startT) startT = Date.now();
+      keys++;
+      if (chEq(e.key, target[0])) { goodKeys++; submit(wrongHere ? 'err' : 'ok'); }
+      else { mistakes++; wrongHere++; shake(); updateStats(); if (wrongHere >= 3) submit('err'); }
+      return;
+    }
+
+    if (e.key === 'Backspace') {
+      e.preventDefault();
+      if (typed[pos]) typed[pos] = e.ctrlKey ? '' : typed[pos].slice(0, -1);
+      else if (pos > 0 && res[pos - 1] === 'err') { // step back into a mistaken word
+        renderWordAs(pos, false); pos--; res[pos] = null;
+        $$(`.ts[data-after="${pos}"]`, inner).forEach(s => s.classList.remove('on'));
+        if (e.ctrlKey) typed[pos] = '';
+      }
+      renderWord(pos); updateStats(); moveCaret(); return;
+    }
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      if (!typed[pos]) return;
+      const t = typed[pos];
+      const ok = t.length === target.length && [...t].every((c, k) => chEq(c, target[k]));
+      return submit(ok ? 'ok' : 'err');
+    }
+    if (e.ctrlKey || e.key.length !== 1) return;
+    e.preventDefault();
+    if (!startT) startT = Date.now();
+    if (typed[pos].length >= target.length + 6) return;
+    const k = typed[pos].length;
+    keys++;
+    if (k < target.length && chEq(e.key, target[k])) goodKeys++; else mistakes++;
+    typed[pos] += e.key;
+    renderWord(pos); updateStats(); moveCaret();
+    // last word completes automatically
+    if (pos === ws.length - 1 && typed[pos].length === target.length && [...typed[pos]].every((c, i) => chEq(c, target[i]))) submit('ok');
+  });
+  function renderWordAs(i) { const save = pos; pos = -1; renderWord(i); pos = save; }
+
+  $$('#vis button').forEach(b => b.onclick = () => {
+    vis = b.dataset.v; DB.settings.typeVis = vis; save(); typer.dataset.vis = vis;
+    $$('#vis button').forEach(x => x.classList.toggle('on', x === b)); b.blur();
+  });
+  $('#restart').onclick = () => go('practice');
+  const onResize = () => moveCaret(true);
+  window.addEventListener('resize', onResize); cleanup.push(() => window.removeEventListener('resize', onResize));
+
+  ws.forEach((_, i) => renderWord(i));
+  updateStats();
+  requestAnimationFrame(() => moveCaret(true));
 }
 
 // ---------- Review ----------
@@ -962,16 +1124,16 @@ function viewHelp(main) {
   main.innerHTML = `<div class="help" style="max-width:780px"><h1>How to use Memo</h1>
   <p>Memo helps you learn poems, speeches, scripture, lines for a play, songs you wrote, vocabulary — anything — word for word.</p>
   <h2>1. Add a text</h2><p>Click <b>＋ New text</b>, paste your text, and leave a blank line between stanzas or paragraphs. Each block becomes a <b>part</b> you can learn one at a time. You can also import <span class="kbd">.txt</span> files (Ctrl+O).</p>
-  <h2>2. Learn it in steps</h2><ol>
+  <h2>2. Learn it in steps</h2><p>Click a text to open its mode screen. Modes are grouped in three columns: <b>Familiarize → Practice → Test</b>. The ring around each mode shows your best score for the selected part, and turns green at 100%.</p><ol>
     <li><b>📖 Read & Listen</b> — read along while it's spoken. Click a word to start from there. Turn on <i>Repeat</i> or <i>Line by line</i>.</li>
     <li><b>🔤 First Letters</b> — only first letters are shown. Recite and click words to check.</li>
     <li><b>🙈 Hide Words</b> — hide 10%, 20%… 100% of the words. Use <b>Hide more</b> as you improve.</li>
     <li><b>❓ Fill the Blank</b> and <b>🔀 Unscramble</b> — quick games to strengthen recall and order.</li>
     <li><b>🃏 Line Cards</b> — see one line, recall the next, then grade yourself (<span class="kbd">Space</span>, <span class="kbd">1</span>, <span class="kbd">2</span>).</li>
-    <li><b>⌨ Type Initials</b> — the classic test: type the first letter of each word from memory. Press <span class="kbd">?</span> to reveal a word.</li>
+    <li><b>⌨ Type Initials</b> — type the first letter of each word from memory. Press <span class="kbd">Tab</span> to reveal a word, <span class="kbd">Esc</span> to restart.</li>
     <li><b>✍ Type Words</b> — type every word in full.</li>
     <li><b>🎙 Recite & Record</b> — record yourself reciting, then play it back while following the text.</li></ol>
-  <h2>3. Part by part</h2><p>Pick a part at the top of the practice screen. Tick <b>Build up</b> to practice parts 1 through N together — the best way to stitch a long text together.</p>
+  <h2>3. Part by part</h2><p>Pick a part above the three columns. Tick <b>Build up</b> to practice parts 1 through N together — the best way to stitch a long text together.</p>
   <h2>4. Review & streaks</h2><p>Every graded session updates the text's <b>mastery</b> and schedules the next <b>review</b> using spaced repetition. Visit <b>⏰ Review</b> daily, keep your 🔥 streak, and set a daily goal and reminder in Settings.</p>
   <h2>Keyboard shortcuts</h2><p><span class="kbd">Ctrl+N</span> new text · <span class="kbd">Ctrl+O</span> import · <span class="kbd">Ctrl + / −</span> zoom · <span class="kbd">F11</span> full screen</p>
   <h2>Your data</h2><p>Everything is stored privately on this computer. Use <b>Settings → Back up</b> to save a copy or move it to another PC.</p></div>`;
