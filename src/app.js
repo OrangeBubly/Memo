@@ -932,7 +932,7 @@ function typingMode(ctx, full, opts = {}) {
   const TW = ws.map((_, p) => [...W(p)].filter(isTypable).join('')); // what you actually type
   const typed = ws.map(() => '');
   const res = ws.map(() => null); // null | 'ok' | 'err'
-  let pos = 0, wrongHere = 0, keys = 0, goodKeys = 0, mistakes = 0, startT = 0, ended = false;
+  let pos = 0, wrongHere = 0, keys = 0, goodKeys = 0, mistakes = 0, typos = 0, startT = 0, ended = false;
   const timeline = [];
   let combo = 0, maxCombo = 0;
   function bumpCombo(ok) {
@@ -969,7 +969,7 @@ function typingMode(ctx, full, opts = {}) {
       <div class="ty-inner" id="tinner">${body}<div class="${caretClasses(S().caretBlink === 'idle' ? 'idle' : '')}" id="caret"></div></div>
     </div>
     <div class="ty-help">${full
-      ? '<span class="kbd">space</span> next word · <span class="kbd">backspace</span> fix · <span class="kbd">ctrl+backspace</span> clear word · <span class="kbd">tab</span> reveal word'
+      ? 'typos are fine — fix them with <span class="kbd">backspace</span> · words are only checked when you press <span class="kbd">space</span> or <span class="kbd">enter</span> · <span class="kbd">ctrl+backspace</span> clear word · <span class="kbd">tab</span> reveal word'
       : 'type the <b>first letter</b> of each word · <span class="kbd">tab</span> reveal word'}</div>`;
 
   const typer = $('#typer'), inner = $('#tinner'), caret = $('#caret');
@@ -1052,7 +1052,7 @@ function typingMode(ctx, full, opts = {}) {
   function showSeps(i) { $$(`.ts[data-after="${i}"]`, inner).forEach(s => s.classList.add('on')); }
 
   function submit(result) {
-    res[pos] = result; showSeps(pos); renderWord(pos); bumpCombo(result === 'ok'); markWord(ctx.t, ws[pos], result === 'ok');
+    res[pos] = result; showSeps(pos); renderWordAs(pos); bumpCombo(result === 'ok'); markWord(ctx.t, ws[pos], result === 'ok');
     pos++; wrongHere = 0;
     if (pos >= ws.length) return finish();
     renderWord(pos); updateStats(); moveCaret();
@@ -1079,7 +1079,7 @@ function typingMode(ctx, full, opts = {}) {
         <div><div class="rv">${fmtT(secs)}</div><div class="rl">time</div></div>
         <svg class="ty-chart" viewBox="0 0 300 62" preserveAspectRatio="none"><polyline points="${pts}"/></svg>
       </div><div class="big" style="font-size:36px">${Math.round(score * 100)}%</div>`;
-    ctx.finish(score, `${errs} word${errs === 1 ? '' : 's'} missed, ${mistakes} wrong key${mistakes === 1 ? '' : 's'}.${maxCombo >= 3 ? ` Best combo ${maxCombo}.` : ''}`, html, { typedWords: ws.length, wpm, combo: maxCombo });
+    ctx.finish(score, `${errs} word${errs === 1 ? '' : 's'} missed${full ? (typos ? `, ${typos} typo${typos === 1 ? '' : 's'} along the way` : '') : `, ${mistakes} wrong key${mistakes === 1 ? '' : 's'}`}.${maxCombo >= 3 ? ` Best combo ${maxCombo}.` : ''}`, html, { typedWords: ws.length, wpm, combo: maxCombo });
   }
 
   function reveal() { if (ended) return; mistakes++; if (!startT) startT = Date.now(); typed[pos] = full ? typed[pos] : ''; submit('err'); }
@@ -1108,12 +1108,8 @@ function typingMode(ctx, full, opts = {}) {
 
     if (e.key === 'Backspace') {
       e.preventDefault();
+      // Fix typos freely within the current word. Submitted words are final.
       if (typed[pos]) typed[pos] = e.ctrlKey ? '' : typed[pos].slice(0, -1);
-      else if (pos > 0 && res[pos - 1] === 'err') { // step back into a mistaken word
-        renderWordAs(pos, false); pos--; res[pos] = null;
-        $$(`.ts[data-after="${pos}"]`, inner).forEach(s => s.classList.remove('on'));
-        if (e.ctrlKey) typed[pos] = '';
-      }
       renderWord(pos); updateStats(); moveCaret(); return;
     }
     if (e.key === ' ' || e.key === 'Enter') {
@@ -1121,6 +1117,7 @@ function typingMode(ctx, full, opts = {}) {
       if (!typed[pos]) return;
       const t = typed[pos];
       const ok = t.length === TW[pos].length && [...t].every((c, k) => chEq(c, TW[pos][k]));
+      if (!ok) { mistakes++; errSound(); } // a word is only ever marked wrong when you submit it
       return submit(ok ? 'ok' : 'err');
     }
     if (e.ctrlKey || e.key.length !== 1) return;
@@ -1130,7 +1127,8 @@ function typingMode(ctx, full, opts = {}) {
     if (typed[pos].length >= TW[pos].length + 6) return;
     const k = typed[pos].length;
     keys++;
-    if (k < TW[pos].length && chEq(e.key, TW[pos][k])) { goodKeys++; keySound(); } else { mistakes++; errSound(); }
+    keySound();
+    if (k < TW[pos].length && chEq(e.key, TW[pos][k])) goodKeys++; else typos++;
     typed[pos] += e.key;
     renderWord(pos); updateStats(); moveCaret();
     // last word completes automatically
