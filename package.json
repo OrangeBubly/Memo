@@ -11,7 +11,7 @@
     "pack:win": "electron-packager . Memo --platform=win32 --arch=x64 --out=dist --overwrite --prune=true --ignore=^/dist --ignore=^/.github --ignore=^/build --icon=build/icon.ico",
     "dist:win": "electron-builder --win nsis portable --publish never",
     "icons": "node build/make-icons.js",
-    "dist:win:linux": "electron-builder --win dir && makensis -DVERSION=1.0.0 build/installer.nsi && electron-builder --win portable --prepackaged dist/win-unpacked --publish never"
+    "dist:win:linux": "electron-builder --win dir && makensis -DVERSION=1.0.0 build/memo-installer.nsi && electron-builder --win portable --prepackaged dist/win-unpacked --publish never"
   },
   "build": {
     "appId": "com.orangebubly.memo",

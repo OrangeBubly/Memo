@@ -1,4 +1,4 @@
-name: Build Windows app
+name: Build & test Windows app
 
 on:
   push:
@@ -7,17 +7,75 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-and-test:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci || npm install
-      - run: npx electron-builder --win nsis portable --publish never
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Same pipeline as the files shipped to users: package, stamp icon, NSIS installer, portable exe
+      - name: Package app (win-unpacked, icon stamped)
+        run: npx electron-builder --win dir --publish never
+
+      - name: Build installer (NSIS)
+        shell: pwsh
+        run: |
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) { choco install nsis -y --no-progress; $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe" }
+          & $makensis /V2 /DVERSION=1.0.0 build\memo-installer.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build portable exe
+        run: npx electron-builder --win portable --prepackaged dist/win-unpacked --publish never
+
+      - name: Silent install
+        shell: pwsh
+        run: |
+          Start-Process -FilePath "dist\Memo-Setup-1.0.0.exe" -ArgumentList '/S' -Wait
+          $dir = "$env:LOCALAPPDATA\Programs\Memo"
+          $ok = $true
+          foreach ($p in @("$dir\Memo.exe", "$dir\Uninstall Memo.exe", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Memo.lnk")) {
+            if (Test-Path $p) { "PASS  installed: $p" } else { "FAIL  missing: $p"; $ok = $false }
+          }
+          $reg = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Memo" -ErrorAction SilentlyContinue
+          if ($reg) { "PASS  Add/Remove Programs entry: $($reg.DisplayName) $($reg.DisplayVersion) by $($reg.Publisher)" } else { "FAIL  no uninstall registry entry"; $ok = $false }
+          $v = (Get-Item "$dir\Memo.exe").VersionInfo
+          "INFO  Memo.exe version info: $($v.ProductName) $($v.FileVersion) / $($v.FileDescription) / $($v.CompanyName)"
+          if (-not $ok) { exit 1 }
+
+      - name: Smoke test the installed app
+        shell: pwsh
+        run: |
+          npm install --no-save playwright@1.49.1
+          node build/smoke-test.js "$env:LOCALAPPDATA\Programs\Memo\Memo.exe"
+
+      - name: Silent uninstall (keeps user data)
+        if: always()
+        shell: pwsh
+        run: |
+          $dir = "$env:LOCALAPPDATA\Programs\Memo"
+          if (Test-Path "$dir\Uninstall Memo.exe") {
+            Start-Process -FilePath "$dir\Uninstall Memo.exe" -ArgumentList '/S' -Wait
+            for ($i = 0; $i -lt 60 -and (Test-Path "$dir\Memo.exe"); $i++) { Start-Sleep 1 }
+          }
+          if (Test-Path "$dir\Memo.exe") { "FAIL  app files still present after uninstall"; exit 1 } else { "PASS  app files removed" }
+          if (Test-Path "$env:LOCALAPPDATA\..\Roaming\Microsoft\Windows\Start Menu\Programs\Memo.lnk") { "FAIL  Start Menu shortcut left behind" } else { "PASS  Start Menu shortcut removed" }
+          if (Test-Path "$env:APPDATA\Memo") { "PASS  user data kept at $env:APPDATA\Memo" } else { "WARN  no user data folder found at $env:APPDATA\Memo" }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-test-screenshots
+          path: smoke-shots/
+
       - uses: actions/upload-artifact@v4
         with:
           name: Memo-Windows
           path: |
-            dist/*.exe
+            dist/Memo-Setup-*.exe
+            dist/Memo-Portable-*.exe

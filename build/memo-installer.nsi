@@ -1,5 +1,5 @@
 ; Memo — Windows installer (NSIS / Modern UI 2)
-; Build:  makensis -DVERSION=1.0.0 build/installer.nsi   (after packaging to dist/win-unpacked)
+; Build:  makensis -DVERSION=1.0.0 build/memo-installer.nsi   (after packaging to dist/win-unpacked)
 ; Installs per-user (no admin prompt) to %LOCALAPPDATA%\Programs\Memo.
 ; Your library and progress live in %APPDATA%\Memo and are kept on uninstall/upgrade.
 
