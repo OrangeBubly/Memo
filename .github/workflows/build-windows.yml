@@ -10,6 +10,10 @@ on:
         description: 'Publish a GitHub release (tag v<package.json version>) if the build and Windows tests pass'
         type: boolean
         default: false
+      replace_existing:
+        description: 'If a release for this version already exists, delete it (and its tag) and publish it again from this commit'
+        type: boolean
+        default: false
 
 jobs:
   build-and-test:
@@ -113,6 +117,18 @@ jobs:
         with:
           name: Memo-Windows
           path: release-files
+      - name: Replace existing release (only when asked)
+        if: github.event_name == 'workflow_dispatch' && inputs.replace_existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ needs.build-and-test.outputs.version }}"
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Replacing existing release $TAG"
+            gh release delete "$TAG" --repo "${{ github.repository }}" --cleanup-tag --yes
+          else
+            echo "No existing release $TAG; publishing a new one"
+          fi
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:

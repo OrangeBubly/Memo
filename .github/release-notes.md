@@ -5,6 +5,7 @@
 - **Customize is now tabbed** (Look · Text · Typing test · Cursor · Sound), with less scrolling
 - **Typing-test layout options** — left or centered text, top or middle of the screen, typed text that stays visible, flowing text, its own text size, and a focus mode, with a live preview
 - **More natural key sounds** — each keypress varies a little in loudness, pitch and tone
+- **Sleek scrollbar** — thin, theme-colored, turns your accent color on hover; choose Sleek, Hidden or Classic in Customize → Look
 
 ## Download
 
