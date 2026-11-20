@@ -928,6 +928,8 @@ function typingMode(ctx, full, opts = {}) {
   const { P, scope, stage } = ctx;
   const ws = scopeWords(scope);
   const W = (p) => P.words[ws[p]].s;
+  const isTypable = (c) => /[\p{L}\p{N}]/u.test(c);
+  const TW = ws.map((_, p) => [...W(p)].filter(isTypable).join('')); // what you actually type
   const typed = ws.map(() => '');
   const res = ws.map(() => null); // null | 'ok' | 'err'
   let pos = 0, wrongHere = 0, keys = 0, goodKeys = 0, mistakes = 0, startT = 0, ended = false;
@@ -979,16 +981,20 @@ function typingMode(ctx, full, opts = {}) {
     if (!full) {
       const cls = done ? (res[i] === 'ok' ? 'ok' : 'bad') : 'u';
       for (let k = 0; k < target.length; k++) h += `<span class="l ${cls}${k ? '' : ' f0'}">${esc(target[k])}</span>`;
-    } else if (done && res[i] === 'err') {
-      // finished but wrong: reveal the correct word in red so it can be learned
-      for (let k = 0; k < target.length; k++) h += `<span class="l ${k < t.length && chEq(t[k], target[k]) ? 'ok' : 'bad'}">${esc(target[k])}</span>`;
     } else {
-      // while typing, a wrong letter shows what was typed — never the answer
+      // Only letters/digits are typed. Punctuation inside a word (summer's, battle-field)
+      // fills itself in as soon as the letters before it are typed.
+      const errDone = done && res[i] === 'err';
+      let n = 0;
       for (let k = 0; k < target.length; k++) {
-        if (k < t.length) h += `<span class="l ${chEq(t[k], target[k]) ? 'ok' : 'bad'}">${esc(chEq(t[k], target[k]) ? target[k] : t[k])}</span>`;
-        else h += `<span class="l u${k ? '' : ' f0'}">${esc(target[k])}</span>`;
+        const c = target[k];
+        if (!isTypable(c)) { h += `<span class="l auto ${errDone || t.length >= n ? 'ok' : 'u'}">${esc(c)}</span>`; continue; }
+        if (errDone) h += `<span class="l ${n < t.length && chEq(t[n], c) ? 'ok' : 'bad'}">${esc(c)}</span>`;       // reveal the right word in red
+        else if (n < t.length) h += `<span class="l ${chEq(t[n], c) ? 'ok' : 'bad'}">${esc(chEq(t[n], c) ? c : t[n])}</span>`; // wrong letter shows what was typed
+        else h += `<span class="l u${k ? '' : ' f0'}">${esc(c)}</span>`;
+        n++;
       }
-      for (let k = target.length; k < t.length; k++) h += `<span class="l extra">${esc(t[k])}</span>`;
+      if (!errDone) for (let k = TW[i].length; k < t.length; k++) h += `<span class="l extra">${esc(t[k])}</span>`;
     }
     const el = wordEl[i];
     el.title = done && res[i] === 'err' && t ? `you typed “${t}”` : '';
@@ -1001,7 +1007,11 @@ function typingMode(ctx, full, opts = {}) {
     if (ended) { caret.style.opacity = 0; return; }
     const el = wordEl[pos]; if (!el) return;
     const letters = $$('.l', el);
-    const idx = full ? typed[pos].length : 0;
+    let idx = 0;
+    if (full) { // DOM index of the next letter to type (skipping auto-filled punctuation)
+      const tgt = W(pos), want = typed[pos].length; let n = 0; idx = letters.length;
+      for (let k = 0; k < tgt.length; k++) { if (!isTypable(tgt[k])) continue; if (n === want) { idx = k; break; } n++; }
+    }
     const ir = inner.getBoundingClientRect();
     let r, x;
     if (idx < letters.length) { r = letters[idx].getBoundingClientRect(); x = r.left; }
@@ -1110,20 +1120,21 @@ function typingMode(ctx, full, opts = {}) {
       e.preventDefault();
       if (!typed[pos]) return;
       const t = typed[pos];
-      const ok = t.length === target.length && [...t].every((c, k) => chEq(c, target[k]));
+      const ok = t.length === TW[pos].length && [...t].every((c, k) => chEq(c, TW[pos][k]));
       return submit(ok ? 'ok' : 'err');
     }
     if (e.ctrlKey || e.key.length !== 1) return;
     e.preventDefault();
+    if (!isTypable(e.key)) return; // punctuation is never typed — it fills in automatically
     if (!startT) startT = Date.now();
-    if (typed[pos].length >= target.length + 6) return;
+    if (typed[pos].length >= TW[pos].length + 6) return;
     const k = typed[pos].length;
     keys++;
-    if (k < target.length && chEq(e.key, target[k])) { goodKeys++; keySound(); } else { mistakes++; errSound(); }
+    if (k < TW[pos].length && chEq(e.key, TW[pos][k])) { goodKeys++; keySound(); } else { mistakes++; errSound(); }
     typed[pos] += e.key;
     renderWord(pos); updateStats(); moveCaret();
     // last word completes automatically
-    if (pos === ws.length - 1 && typed[pos].length === target.length && [...typed[pos]].every((c, i) => chEq(c, target[i]))) submit('ok');
+    if (pos === ws.length - 1 && typed[pos].length === TW[pos].length && [...typed[pos]].every((c, i) => chEq(c, TW[pos][i]))) submit('ok');
   });
   function renderWordAs(i) { const save = pos; pos = -1; renderWord(i); pos = save; }
 
@@ -1201,7 +1212,7 @@ function viewSettings(main) {
       <select id="voice" style="max-width:260px"><option value="">Default</option>${voices.map(v => `<option ${S.ttsVoice === v.name ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></div>
     <div class="card setting"><div><b>Reading speed</b></div><div class="row"><input type="range" id="rate" min="0.5" max="1.6" step="0.1" value="${S.ttsRate}"><span id="ratev">${S.ttsRate}×</span><button class="btn small" id="testv">Test</button></div></div>
     <div class="card setting"><div><b>Speak lines when revealed</b><div class="desc">In Line Cards, read each line aloud on reveal</div></div><input type="checkbox" id="asl" ${S.autoSpeakLines ? 'checked' : ''}></div>
-    <div class="card setting"><div><b>Strict typing</b><div class="desc">In Type Words, require exact capitalization and punctuation</div></div><input type="checkbox" id="strict" ${S.strictTyping ? 'checked' : ''}></div>
+    <div class="card setting"><div><b>Strict typing</b><div class="desc">In Type Words, require exact capitalization (punctuation is always filled in for you)</div></div><input type="checkbox" id="strict" ${S.strictTyping ? 'checked' : ''}></div>
     <div class="card setting"><div><b>Daily goal</b><div class="desc">Minutes of practice per day</div></div><input type="number" id="goal" min="1" max="240" value="${S.dailyGoal}" style="width:80px"></div>
     <div class="card setting"><div><b>Daily reminder</b><div class="desc">Desktop notification when reviews are due (while Memo is open or minimized)</div></div><input type="time" id="rem" value="${S.reminderTime}"></div>
     <div class="card setting"><div><b>Backup</b><div class="desc">Save or restore your whole library (texts, progress, settings)</div></div>
