@@ -25,10 +25,11 @@ function desktopShot(name) { // whole Windows screen: real window frame, taskbar
 }
 
 async function launch() {
-  const app = await _electron.launch({ executablePath: exe, timeout: 60000 });
+  const app = await _electron.launch({ executablePath: exe, args: process.argv.slice(3), timeout: 60000 }); // extra args: e.g. an app folder when testing an unpackaged build
   const win = await app.firstWindow();
-  await win.waitForLoadState('domcontentloaded');
-  await win.waitForSelector('#main .text-card, #main .empty', { timeout: 30000 });
+  // Wait for the app itself to render, not Playwright's load events: those can be missed
+  // when Electron finishes loading before Playwright attaches (a timing race seen on CI).
+  await win.waitForSelector('#main .text-card, #main .empty', { timeout: 60000 });
   await sleep(800);
   return { app, win };
 }
