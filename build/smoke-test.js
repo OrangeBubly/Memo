@@ -58,14 +58,14 @@ const shot = async (win, name) => { await win.evaluate(() => { document.querySel
   check('Sidebar hidden during test', await win.evaluate(() => getComputedStyle(document.querySelector('#sidebar')).display === 'none'));
   const words = await win.evaluate(() => [...document.querySelectorAll('.tw')].map(w => w.textContent.replace(/[^\p{L}\p{N}]/gu, '')));
   for (let i = 0; i < 20; i++) {
-    if (i === 3) { await win.keyboard.type('compxre', { delay: 25 }); for (let k = 0; k < 3; k++) await win.keyboard.press('Backspace'); await win.keyboard.type('are', { delay: 25 }); } // typo fixed before space
+    if (i === 2) { await win.keyboard.type('compxre', { delay: 25 }); for (let k = 0; k < 3; k++) await win.keyboard.press('Backspace'); await win.keyboard.type('are', { delay: 25 }); } // typo fixed before space
     else if (i === 6) await win.keyboard.type('sumner', { delay: 25 }); // wrong word, submitted
     else await win.keyboard.type(words[i], { delay: 25 });
     await win.keyboard.press('Space');
   }
   await sleep(500);
   const st = await win.evaluate(() => [...document.querySelectorAll('.tw')].slice(0, 20).map(w => w.className.includes('err') ? 'E' : '.').join(''));
-  check('Fixed typo counts as correct; only the submitted wrong word is red', st === '......E.............', st);
+  check('Fixed typo counts as correct; only the submitted wrong word is red', st === '......E.............', st + '  (E = marked wrong; word 3 had a fixed typo, word 7 was submitted wrong)');
   check('No per-letter red while typing a word', await win.evaluate(() => { const c = document.querySelector('.tw.cur'); return !c || !c.querySelector('.l.bad'); }));
   await shot(win, '03-typing-test');
   desktopShot('04-desktop-fullscreen-test');
