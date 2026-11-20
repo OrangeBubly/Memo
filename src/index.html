@@ -9,13 +9,16 @@
 <body>
   <div id="app">
     <nav id="sidebar">
-      <div class="brand"><span class="logo">M</span> Memo</div>
-      <button class="nav-btn" data-view="library">📚 Library</button>
-      <button class="nav-btn" data-view="review">⏰ Review <span id="due-badge" class="badge hidden"></span></button>
-      <button class="nav-btn" data-view="stats">📈 Progress</button>
-      <button class="nav-btn" data-view="settings">⚙️ Settings</button>
-      <button class="nav-btn" data-view="help">❓ Help</button>
+      <div class="brand"><span class="logo">M</span><span class="lbl">Memo</span></div>
+      <button class="nav-btn" data-view="library" title="Library"><span class="ni">📚</span><span class="lbl">Library</span></button>
+      <button class="nav-btn" data-view="review" title="Review"><span class="ni">⏰</span><span class="lbl">Review</span> <span id="due-badge" class="badge hidden"></span></button>
+      <button class="nav-btn" data-view="profile" title="Profile"><span class="ni">🏆</span><span class="lbl">Profile</span></button>
+      <button class="nav-btn" data-view="stats" title="Progress"><span class="ni">📈</span><span class="lbl">Progress</span></button>
+      <button class="nav-btn" data-view="customize" title="Customize"><span class="ni">🎨</span><span class="lbl">Customize</span></button>
+      <button class="nav-btn" data-view="settings" title="Settings"><span class="ni">⚙️</span><span class="lbl">Settings</span></button>
+      <button class="nav-btn" data-view="help" title="Help"><span class="ni">❓</span><span class="lbl">Help</span></button>
       <div class="sidebar-foot">
+        <div id="lvl-pill" class="lvl-pill" title="Open profile"></div>
         <div id="streak-pill" class="streak">🔥 0 day streak</div>
         <div id="goal-pill" class="goal"></div>
       </div>
@@ -24,6 +27,7 @@
   </div>
   <div id="modal-root"></div>
   <div id="toast" class="toast hidden"></div>
+  <script src="look.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

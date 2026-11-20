@@ -40,7 +40,7 @@ function confirmBox(msg, okLabel = 'OK', danger = false) {
 
 // ---------- storage ----------
 const STORE_KEY = 'memo-data-v1';
-const DEFAULT_SETTINGS = {
+const DEFAULT_SETTINGS = { ...LOOK_DEFAULTS,
   theme: 'system', fontSize: 22, ttsRate: 1, ttsVoice: '', dailyGoal: 10, reminderTime: '',
   split: 'paragraph', typeHints: false, strictTyping: false, autoSpeakLines: false
 };
@@ -123,6 +123,7 @@ const Rec = {
 function logActivity(seconds, session = false) {
   const k = todayKey(); const a = DB.activity[k] ||= { seconds: 0, sessions: 0 };
   a.seconds += seconds; if (session) a.sessions += 1; save(); updateSidebar();
+  if (seconds > 0) gameEvent('time', { seconds });
 }
 function streak() {
   let n = 0, k = todayKey();
@@ -215,7 +216,7 @@ function go(view, extra = {}) {
   setFocusMode(view === 'practice' && GROUPS[2].modes.includes(state.mode));
   const main = $('#main'); main.scrollTop = 0;
   ({ library: viewLibrary, review: viewReview, stats: viewStats, settings: viewSettings, help: viewHelp,
-     text: viewText, edit: viewEdit, practice: viewPractice })[view](main);
+     text: viewText, edit: viewEdit, practice: viewPractice, profile: viewProfile, customize: viewCustomize })[view](main);
   updateSidebar();
 }
 
@@ -230,6 +231,8 @@ function setFocusMode(on) {
 }
 
 function updateSidebar() {
+  const lp = levelProgress();
+  $('#lvl-pill').innerHTML = `<div class="lv-row"><span class="lv-badge">${lp.L}</span><div><b>${rankOf(lp.L)}</b><div class="lv-xp">${lp.into}/${lp.need} XP</div></div></div><div class="xpbar"><div style="width:${lp.pct}%"></div></div>`;
   const s = streak();
   $('#streak-pill').textContent = `🔥 ${s} day streak`;
   const sec = DB.activity[todayKey()]?.seconds || 0, goal = DB.settings.dailyGoal * 60;
@@ -239,7 +242,8 @@ function updateSidebar() {
   b.textContent = due; b.classList.toggle('hidden', !due);
 }
 
-function applyTheme() {
+function applyTheme() { return applyLook(); }
+function applyThemeOld() {
   let t = DB.settings.theme;
   if (t === 'system') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   document.documentElement.dataset.theme = t;
@@ -265,7 +269,7 @@ async function newFolderFlow() {
   const name = await promptBox('New folder', '', 'Create');
   if (!name) return null;
   if (allFolders().includes(name)) { toast('That folder already exists'); return name; }
-  addFolder(name); toast(`Folder “${name}” created`); return name;
+  addFolder(name); toast(`Folder “${name}” created`); gameEvent('folder'); return name;
 }
 async function renameFolder(old) {
   const name = await promptBox('Rename folder', old, 'Rename');
@@ -512,7 +516,7 @@ function viewEdit(main) {
     if (!body.value.trim()) return toast('Add some text to memorize first');
     const fields = { title, author: $('#author').value.trim(), folder: $('#folder').value.trim(), body: body.value.replace(/\r/g, '').trim(), notes: $('#notes').value, updated: Date.now() };
     let id;
-    if (t) { Object.assign(t, fields); id = t.id; } else { const n = newText(fields); DB.texts.push(n); id = n.id; }
+    if (t) { Object.assign(t, fields); id = t.id; } else { const n = newText(fields); DB.texts.push(n); id = n.id; gameEvent('text'); }
     if (fields.folder) addFolder(fields.folder);
     save(); toast('Saved'); go('text', { textId: id });
   };
@@ -594,7 +598,10 @@ function viewPractice(main) {
   cleanup.push(() => { clearInterval(tick); if (document.hasFocus()) logActivity((Date.now() - last) / 1000); });
 
   const ctx = { t, P, scope, stage: $('#stage'), started: Date.now(),
-    finish(score, extra = '', html = '') { const secs = (Date.now() - this.started) / 1000; recordSession(t, state.mode, score, secs, scope.label, scope.key); setModeProgress(t, state.mode, score); showDone(this, score, extra, html); } };
+    finish(score, extra = '', html = '', meta = {}) { const secs = (Date.now() - this.started) / 1000; const wasDue = isDue(t); const lvBefore = levelProgress();
+      recordSession(t, state.mode, score, secs, scope.label, scope.key); setModeProgress(t, state.mode, score);
+      this.xp = { gained: gameEvent('session', { mode: state.mode, score, wasDue, words: scopeWords(scope).length, ...meta }), before: lvBefore };
+      showDone(this, score, extra, html); } };
   PRACTICE[state.mode](ctx);
 }
 
@@ -617,9 +624,13 @@ function showDone(ctx, score, extra, html = '') {
   ctx.stage.insertAdjacentHTML('afterbegin', `<div class="card done-box" id="donebox">
     ${html || `<div class="big">${pct}%</div>`}<div style="font-size:18px;margin:8px 0">${msg}</div>
     <div class="sub">${extra} Mastery now ${ctx.t.mastery}% · next review ${fmtDate(ctx.t.nextReview)}</div>
+    ${ctx.xp ? (() => { const a = levelProgress(); const same = a.L === ctx.xp.before.L; return `<div class="xp-done"><span class="xp-gain">+${ctx.xp.gained} XP</span>
+      <div class="xpbar"><div id="xpfill" style="width:${same ? ctx.xp.before.pct : 0}%" data-to="${a.pct}"></div></div><span class="sub" style="margin:0">Lv ${a.L} · ${a.into}/${a.need}</span></div>`; })() : ''}
     <div class="row" style="justify-content:center"><button class="btn primary" id="again">↻ Try again</button>
     ${nextMode ? `<button class="btn" id="nextmode">Next: ${MODES[nextMode].label} →</button>` : ''}
     <button class="btn" id="hub">All modes</button></div></div>`);
+  requestAnimationFrame(() => requestAnimationFrame(() => { const f = $('#xpfill'); if (f) f.style.width = f.dataset.to + '%'; }));
+  sfx('done'); if (pct >= 90) confetti(pct >= 99 ? 1 : 0.6);
   $('#again').onclick = () => go('practice');
   $('#nextmode')?.addEventListener('click', () => go('practice', { mode: nextMode }));
   $('#hub').onclick = () => go('text');
@@ -872,7 +883,7 @@ const PRACTICE = {
           stream.getTracks().forEach(tr => tr.stop()); clearInterval(timer);
           const secs = (Date.now() - recStart) / 1000;
           await Rec.add({ id: uid(), textId: t.id, created: Date.now(), seconds: secs, scope: ctx.scope.label, blob: new Blob(chunks, { type: mr.mimeType || 'audio/webm' }) });
-          logActivity(0, false);
+          logActivity(0, false); gameEvent('recording');
           if ($('#rec')) { $('#rec').textContent = '● Start recording'; $('#recstat').innerHTML = ''; drawRecs(); toast('Recording saved'); }
         };
         mr.start(); recStart = Date.now();
@@ -916,6 +927,15 @@ function typingMode(ctx, full) {
   const res = ws.map(() => null); // null | 'ok' | 'err'
   let pos = 0, wrongHere = 0, keys = 0, goodKeys = 0, mistakes = 0, startT = 0, ended = false;
   const timeline = [];
+  let combo = 0, maxCombo = 0;
+  function bumpCombo(ok) {
+    combo = ok ? combo + 1 : 0; maxCombo = Math.max(maxCombo, combo);
+    const el = $('#tcombo'); if (!el) return;
+    el.textContent = combo >= 3 ? `🔥 ${combo} combo` : '';
+    el.classList.toggle('hot', combo >= 25);
+    el.classList.remove('bump'); void el.offsetWidth; if (combo >= 3) el.classList.add('bump');
+    if (combo && combo % 25 === 0) sfx('combo');
+  }
   const VIS = [['hidden', 'Hidden'], ['initials', 'First letters'], ['faint', 'Show text']];
   let vis = DB.settings.typeVis || 'hidden';
 
@@ -932,14 +952,14 @@ function typingMode(ctx, full) {
       <div class="ty-live"><span class="tl-v" id="twpm">0</span><span class="tl-l">wpm</span>
         <span class="tl-v" id="tacc">100%</span><span class="tl-l">acc</span>
         <span class="tl-v" id="tprog">0/${ws.length}</span><span class="tl-l">words</span>
-        <span class="tl-v" id="ttime">0:00</span></div>
+        <span class="tl-v" id="ttime">0:00</span>${S().combo ? '<span class="combo" id="tcombo"></span>' : ''}</div>
       <span class="spacer"></span>
       <div class="seg" id="vis">${VIS.map(([v, l]) => `<button data-v="${v}" class="${vis === v ? 'on' : ''}">${l}</button>`).join('')}</div>
       <button class="btn small" id="restart">↻ Restart <span class="kbd">Esc</span></button>
     </div>
     <div class="ty-bar"><div id="tbar"></div></div>
     <div class="typer" id="typer" data-vis="${vis}" tabindex="0">
-      <div class="ty-inner" id="tinner">${body}<div class="caret idle" id="caret"></div></div>
+      <div class="ty-inner" id="tinner">${body}<div class="${caretClasses(S().caretBlink === 'idle' ? 'idle' : '')}" id="caret"></div></div>
     </div>
     <div class="ty-help">${full
       ? '<span class="kbd">space</span> next word · <span class="kbd">backspace</span> fix · <span class="kbd">ctrl+backspace</span> clear word · <span class="kbd">tab</span> reveal word'
@@ -983,14 +1003,19 @@ function typingMode(ctx, full) {
     else { r = letters[letters.length - 1].getBoundingClientRect(); x = r.right; }
     const y = r.top - ir.top;
     caret.style.transition = instant ? 'none' : '';
-    caret.style.height = r.height + 'px';
-    caret.style.transform = `translate(${x - ir.left - 1}px, ${y}px)`;
+    const w = idx < letters.length ? r.width : (letters[letters.length - 1].getBoundingClientRect().width);
+    placeCaret(caret, x - ir.left, y, w, r.height);
     // keep the caret's line as the second visible line
-    const lh = r.height * 1.1;
+    // Keep the previous visual line (even across a stanza gap) as the top visible line.
+    const curTop = el.getBoundingClientRect().top - ir.top;
+    let want = 0;
+    for (let j = pos - 1; j >= 0 && j >= pos - 80; j--) {
+      const t = wordEl[j].getBoundingClientRect().top - ir.top;
+      if (t < curTop - 2) { want = Math.max(0, Math.round(t)); break; }
+    }
     const curOffset = -(parseFloat(inner.dataset.off) || 0);
-    const want = Math.max(0, y - lh);
     if (Math.abs(want - curOffset) > 2) { inner.dataset.off = -want; inner.style.transform = `translateY(${-want}px)`; }
-    caret.classList.remove('idle'); clearTimeout(caretIdleT); caretIdleT = setTimeout(() => caret.classList.add('idle'), 600);
+    caret.classList.remove('idle'); clearTimeout(caretIdleT); if (S().caretBlink === 'idle') caretIdleT = setTimeout(() => caret.classList.add('idle'), 600);
   }
 
   const fmtT = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -1012,7 +1037,7 @@ function typingMode(ctx, full) {
   function showSeps(i) { $$(`.ts[data-after="${i}"]`, inner).forEach(s => s.classList.add('on')); }
 
   function submit(result) {
-    res[pos] = result; showSeps(pos); renderWord(pos);
+    res[pos] = result; showSeps(pos); renderWord(pos); bumpCombo(result === 'ok');
     pos++; wrongHere = 0;
     if (pos >= ws.length) return finish();
     renderWord(pos); updateStats(); moveCaret();
@@ -1039,7 +1064,7 @@ function typingMode(ctx, full) {
         <div><div class="rv">${fmtT(secs)}</div><div class="rl">time</div></div>
         <svg class="ty-chart" viewBox="0 0 300 62" preserveAspectRatio="none"><polyline points="${pts}"/></svg>
       </div><div class="big" style="font-size:36px">${Math.round(score * 100)}%</div>`;
-    ctx.finish(score, `${errs} word${errs === 1 ? '' : 's'} missed, ${mistakes} wrong key${mistakes === 1 ? '' : 's'}.`, html);
+    ctx.finish(score, `${errs} word${errs === 1 ? '' : 's'} missed, ${mistakes} wrong key${mistakes === 1 ? '' : 's'}.${maxCombo >= 3 ? ` Best combo ${maxCombo}.` : ''}`, html, { typedWords: ws.length, wpm, combo: maxCombo });
   }
 
   function reveal() { if (ended) return; mistakes++; if (!startT) startT = Date.now(); typed[pos] = full ? typed[pos] : ''; submit('err'); }
@@ -1061,8 +1086,8 @@ function typingMode(ctx, full) {
       e.preventDefault();
       if (!startT) startT = Date.now();
       keys++;
-      if (chEq(e.key, target[0])) { goodKeys++; submit(wrongHere ? 'err' : 'ok'); }
-      else { mistakes++; wrongHere++; shake(); updateStats(); if (wrongHere >= 3) submit('err'); }
+      if (chEq(e.key, target[0])) { goodKeys++; keySound(); submit(wrongHere ? 'err' : 'ok'); }
+      else { mistakes++; wrongHere++; errSound(); shake(); updateStats(); if (wrongHere >= 3) submit('err'); }
       return;
     }
 
@@ -1089,7 +1114,7 @@ function typingMode(ctx, full) {
     if (typed[pos].length >= target.length + 6) return;
     const k = typed[pos].length;
     keys++;
-    if (k < target.length && chEq(e.key, target[k])) goodKeys++; else mistakes++;
+    if (k < target.length && chEq(e.key, target[k])) { goodKeys++; keySound(); } else { mistakes++; errSound(); }
     typed[pos] += e.key;
     renderWord(pos); updateStats(); moveCaret();
     // last word completes automatically
@@ -1164,10 +1189,7 @@ function viewSettings(main) {
   const voices = voicesCache;
   main.innerHTML = `<h1>Settings</h1><div class="sub">Changes save automatically.</div>
   <div class="settings">
-    <div class="card setting"><div><b>Theme</b><div class="desc">Light, dark, sepia or follow Windows</div></div>
-      <select id="theme">${['system', 'light', 'dark', 'sepia'].map(v => `<option ${S.theme === v ? 'selected' : ''} value="${v}">${v[0].toUpperCase() + v.slice(1)}</option>`).join('')}</select></div>
-    <div class="card setting"><div><b>Text size</b><div class="desc">Size of the text while practicing</div></div>
-      <div class="row"><input type="range" id="fs" min="14" max="40" value="${S.fontSize}"><span id="fsv">${S.fontSize}px</span></div></div>
+    <div class="card setting"><div><b>Look &amp; feel</b><div class="desc">Themes, colors, fonts, cursor, sounds and more</div></div><button class="btn primary" id="gocz">🎨 Open Customize</button></div>
     <div class="card setting"><div><b>Split texts into parts by</b><div class="desc">How texts are broken into parts for practice</div></div>
       <select id="split">${[['paragraph', 'Blank lines (stanzas/paragraphs)'], ['sentence', 'Sentences'], ['lines4', 'Every 4 lines'], ['line', 'Every line']].map(([v, l]) => `<option value="${v}" ${S.split === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
     <div class="card setting"><div><b>Reading voice</b><div class="desc">Voice used for Listen (uses the voices installed in Windows)</div></div>
@@ -1183,8 +1205,7 @@ function viewSettings(main) {
       <div class="row"><button class="btn" id="rp">Reset progress</button><button class="btn danger" id="wipe">Erase all</button></div></div>
   </div>`;
   const set = (k, v) => { S[k] = v; save(); applyTheme(); updateSidebar(); };
-  $('#theme').onchange = e => set('theme', e.target.value);
-  $('#fs').oninput = e => { set('fontSize', +e.target.value); $('#fsv').textContent = e.target.value + 'px'; };
+  $('#gocz').onclick = () => go('customize');
   $('#split').onchange = e => set('split', e.target.value);
   $('#voice').onchange = e => set('ttsVoice', e.target.value);
   $('#rate').oninput = e => { set('ttsRate', +e.target.value); $('#ratev').textContent = e.target.value + '×'; };
@@ -1197,7 +1218,7 @@ function viewSettings(main) {
   $('#rp').onclick = async () => {
     if (!await confirmBox('Reset all progress? Your texts are kept.', 'Reset', true)) return;
     DB.texts.forEach(t => Object.assign(t, { mastery: 0, hideLevel: 0, interval: 0, ease: 2.5, nextReview: null, lastPracticed: null, sessions: [], sectionMastery: {} }));
-    DB.activity = {}; save(); toast('Progress reset'); go('settings');
+    DB.activity = {}; DB.game = {}; save(); toast('Progress reset'); go('settings');
   };
   $('#wipe').onclick = async () => {
     if (!await confirmBox('Erase ALL texts, recordings and progress?', 'Erase everything', true)) return;
@@ -1238,6 +1259,8 @@ function viewHelp(main) {
   <h2>4. Review & streaks</h2><p>Every graded session updates the text's <b>mastery</b> and schedules the next <b>review</b> using spaced repetition. Visit <b>⏰ Review</b> daily, keep your 🔥 streak, and set a daily goal and reminder in Settings.</p>
   <h2>Keyboard shortcuts</h2><p><span class="kbd">Ctrl+N</span> new text · <span class="kbd">Ctrl+O</span> import · <span class="kbd">Ctrl + / −</span> zoom · <span class="kbd">F11</span> full screen</p>
   <h2>Folders</h2><p>Click <b>📁 New folder</b> in the Library. Drag a text onto a folder to move it, or use the 📁 button on a text. Open a folder to rename or delete it (deleting a folder keeps its texts).</p>
+  <h2>Levels, quests &amp; badges</h2><p>Every session earns <b>XP</b>; harder modes, higher scores, longer texts, reviews and streaks earn more. Level up to unlock themes, cursor colors and sounds. Check <b>🏆 Profile</b> for 3 new daily quests and achievements.</p>
+  <h2>Make it yours</h2><p><b>🎨 Customize</b> has themes, accent colors, fonts, cursor styles (try <i>Block</i> with <i>Always</i> blink for a command-prompt look), key sounds, backgrounds and more.</p>
   <h2>Your data</h2><p>Everything is stored privately on this computer. Use <b>Settings → Back up</b> to save a copy or move it to another PC.</p></div>`;
 }
 
@@ -1258,6 +1281,7 @@ function checkReminder() {
 
 // ---------- boot ----------
 $$('.nav-btn').forEach(b => b.addEventListener('click', () => go(b.dataset.view, b.dataset.view === 'library' ? { folder: '__all' } : {})));
+$('#lvl-pill').addEventListener('click', () => go('profile'));
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 window.native?.onMenu(a => ({ new: () => go('edit', { textId: null }), import: importTxt, backup, restore, help: () => go('help') })[a]?.());
 window.addEventListener('keydown', e => {
