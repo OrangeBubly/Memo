@@ -5,7 +5,7 @@
 
 Unicode true
 !ifndef VERSION
-  !define VERSION "1.0.0"
+  !define VERSION "1.0.1"
 !endif
 !define APPNAME "Memo"
 !define COMPANY "OrangeBubly"

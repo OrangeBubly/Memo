@@ -1,3 +1,11 @@
+## What's new in 1.0.1
+
+- **Calmer combo counter** — appears quietly after 5 words in a row, no pop on every word, a soft pulse at milestones
+- **Full screen is respected** — if the window was full screen before a test, it stays full screen afterwards
+- **Customize is now tabbed** (Look · Text · Typing test · Cursor · Sound), with less scrolling
+- **Typing-test layout options** — left or centered text, top or middle of the screen, typed text that stays visible, flowing text, its own text size, and a focus mode, with a live preview
+- **More natural key sounds** — each keypress varies a little in loudness, pitch and tone
+
 ## Download
 
 | File | What it is |

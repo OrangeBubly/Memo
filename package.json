@@ -1,7 +1,7 @@
 {
   "name": "memo-by-heart",
   "productName": "Memo",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Memorize poems, speeches, scripture, lines and more by heart.",
   "main": "main.js",
   "author": "OrangeBubly",
@@ -11,12 +11,12 @@
     "pack:win": "electron-packager . Memo --platform=win32 --arch=x64 --out=dist --overwrite --prune=true --ignore=^/dist --ignore=^/.github --ignore=^/build --icon=build/icon.ico",
     "dist:win": "electron-builder --win nsis portable --publish never",
     "icons": "node build/make-icons.js",
-    "dist:win:linux": "electron-builder --win dir && makensis -DVERSION=1.0.0 build/memo-installer.nsi && electron-builder --win portable --prepackaged dist/win-unpacked --publish never"
+    "dist:win:linux": "electron-builder --win dir && makensis -DVERSION=$npm_package_version build/memo-installer.nsi && electron-builder --win portable --prepackaged dist/win-unpacked --publish never"
   },
   "build": {
     "appId": "com.orangebubly.memo",
     "productName": "Memo",
-    "copyright": "Copyright \u00a9 2026 OrangeBubly",
+    "copyright": "Copyright © 2026 OrangeBubly",
     "directories": {
       "buildResources": "build",
       "output": "dist"
