@@ -89,9 +89,9 @@ function newText(fields = {}) {
 function load() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) { const d = JSON.parse(raw); d.settings = { ...DEFAULT_SETTINGS, ...d.settings }; d.activity ||= {}; d.texts ||= []; return d; }
+    if (raw) { const d = JSON.parse(raw); d.settings = { ...DEFAULT_SETTINGS, ...d.settings }; d.activity ||= {}; d.texts ||= []; d.folders ||= []; return d; }
   } catch (e) { console.error(e); }
-  return { texts: SAMPLES.map(s => newText(s)), settings: { ...DEFAULT_SETTINGS }, activity: {}, reminded: '' };
+  return { texts: SAMPLES.map(s => newText(s)), settings: { ...DEFAULT_SETTINGS }, activity: {}, folders: [], reminded: '' };
 }
 let DB = load();
 let saveTimer;
@@ -212,10 +212,21 @@ function go(view, extra = {}) {
   runCleanup(); stopSpeech();
   Object.assign(state, extra, { view });
   $$('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view || (view === 'text' || view === 'edit' || view === 'practice') && b.dataset.view === 'library'));
+  setFocusMode(view === 'practice' && GROUPS[2].modes.includes(state.mode));
   const main = $('#main'); main.scrollTop = 0;
   ({ library: viewLibrary, review: viewReview, stats: viewStats, settings: viewSettings, help: viewHelp,
      text: viewText, edit: viewEdit, practice: viewPractice })[view](main);
   updateSidebar();
+}
+
+// Tests run full screen with the sidebar hidden.
+let focusOn = false;
+function setFocusMode(on) {
+  document.body.classList.toggle('focus', on);
+  if (on === focusOn) return; focusOn = on;
+  if (window.native?.setFullScreen) window.native.setFullScreen(on);
+  else if (on && !document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
+  else if (!on && document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
 }
 
 function updateSidebar() {
@@ -235,12 +246,72 @@ function applyTheme() {
   document.documentElement.style.setProperty('--reading', DB.settings.fontSize + 'px');
 }
 
+// ---------- Folders ----------
+function allFolders() { return [...new Set([...(DB.folders ||= []), ...DB.texts.map(t => t.folder).filter(Boolean)])].sort((a, b) => a.localeCompare(b)); }
+function addFolder(name) { name = name.trim(); if (name && !allFolders().includes(name)) { DB.folders.push(name); save(); } return name; }
+function promptBox(title, value = '', okLabel = 'OK') {
+  return new Promise(res => {
+    modal(`<h2>${esc(title)}</h2><input id="pb" style="width:100%" value="${esc(value)}" maxlength="60">
+      <div class="row" style="margin-top:14px"><span class="spacer"></span><button class="btn" data-a="no">Cancel</button><button class="btn primary" data-a="yes">${esc(okLabel)}</button></div>`,
+      (m, close) => {
+        const inp = $('#pb', m); inp.focus(); inp.select();
+        const done = ok => { const v = inp.value.trim(); close(); res(ok && v ? v : null); };
+        m.addEventListener('click', e => { const a = e.target.dataset.a; if (a) done(a === 'yes'); });
+        inp.addEventListener('keydown', e => { if (e.key === 'Enter') done(true); });
+      });
+  });
+}
+async function newFolderFlow() {
+  const name = await promptBox('New folder', '', 'Create');
+  if (!name) return null;
+  if (allFolders().includes(name)) { toast('That folder already exists'); return name; }
+  addFolder(name); toast(`Folder “${name}” created`); return name;
+}
+async function renameFolder(old) {
+  const name = await promptBox('Rename folder', old, 'Rename');
+  if (!name || name === old) return;
+  DB.texts.forEach(t => { if (t.folder === old) t.folder = name; });
+  DB.folders = DB.folders.filter(f => f !== old && f !== name); DB.folders.push(name);
+  save(); toast('Folder renamed'); go('library', { folder: name });
+}
+async function deleteFolder(name) {
+  const n = DB.texts.filter(t => t.folder === name).length;
+  if (!await confirmBox(n ? `Delete folder “${name}”? Its ${n} text${n === 1 ? '' : 's'} will move to Unfiled (not deleted).` : `Delete folder “${name}”?`, 'Delete folder', true)) return;
+  DB.texts.forEach(t => { if (t.folder === name) t.folder = ''; });
+  DB.folders = DB.folders.filter(f => f !== name); save(); toast('Folder deleted'); go('library', { folder: '__all' });
+}
+function moveText(t, folder) { t.folder = folder; t.updated = Date.now(); if (folder) addFolder(folder); save(); }
+function moveDialog(t, after) {
+  const fs = allFolders();
+  modal(`<h2>Move “${esc(t.title)}” to…</h2>
+    <div class="move-list">
+      ${fs.map(f => `<button class="btn ${t.folder === f ? 'on' : ''}" data-mv="${esc(f)}">📁 ${esc(f)}</button>`).join('')}
+      <button class="btn ${!t.folder ? 'on' : ''}" data-mv="">📄 Unfiled</button>
+      <button class="btn" data-new="1">＋ New folder…</button>
+    </div>`, (m, close) => {
+    m.addEventListener('click', async e => {
+      const b = e.target.closest('button'); if (!b) return;
+      if (b.dataset.new) { close(); const n = await newFolderFlow(); if (n) { moveText(t, n); toast(`Moved to ${n}`); after?.(); } return; }
+      if (b.dataset.mv != null) { close(); moveText(t, b.dataset.mv); toast(b.dataset.mv ? `Moved to ${b.dataset.mv}` : 'Moved to Unfiled'); after?.(); }
+    });
+  });
+}
+
 // ---------- Library ----------
 function viewLibrary(main) {
-  const folders = [...new Set(DB.texts.map(t => t.folder).filter(Boolean))].sort();
+  const folders = allFolders();
+  if (state.folder !== '__all' && state.folder !== '' && !folders.includes(state.folder)) state.folder = '__all';
+  const inFolder = state.folder !== '__all';
+  const count = f => DB.texts.filter(t => t.folder === f).length;
+  const avg = f => { const l = DB.texts.filter(t => t.folder === f); return l.length ? Math.round(l.reduce((a, t) => a + t.mastery, 0) / l.length) : 0; };
   main.innerHTML = `
-    <div class="row"><div><h1>Library</h1><div class="sub">${DB.texts.length} texts · ${DB.texts.reduce((a, t) => a + wordCount(t.body), 0)} words</div></div>
+    <div class="row"><div>
+        ${inFolder ? `<button class="btn small" id="allback" style="margin-bottom:8px">← All texts</button>` : ''}
+        <h1>${inFolder ? (state.folder ? '📁 ' + esc(state.folder) : '📄 Unfiled') : 'Library'}</h1>
+        <div class="sub">${inFolder ? count(state.folder) + ' texts' : `${DB.texts.length} texts · ${folders.length} folders · ${DB.texts.reduce((a, t) => a + wordCount(t.body), 0)} words`}</div></div>
       <span class="spacer"></span>
+      ${inFolder && state.folder ? `<button class="btn" id="renf">✎ Rename folder</button><button class="btn danger" id="delf">🗑 Delete folder</button>` : ''}
+      <button class="btn" id="newf">📁 New folder</button>
       <button class="btn" id="imp">⬆ Import .txt</button>
       <button class="btn primary" id="new">＋ New text</button></div>
     <div class="row lib-tools">
@@ -251,12 +322,18 @@ function viewLibrary(main) {
       </select>
       <button class="btn ${state.favOnly ? 'on' : ''}" id="favonly">★ Favorites</button>
     </div>
-    <div class="folder-chips">
-      <button class="chip ${state.folder === '__all' ? 'active' : ''}" data-f="__all">All</button>
-      ${folders.map(f => `<button class="chip ${state.folder === f ? 'active' : ''}" data-f="${esc(f)}">📁 ${esc(f)}</button>`).join('')}
-      <button class="chip ${state.folder === '' ? 'active' : ''}" data-f="">Unfiled</button>
+    ${!inFolder ? `<h2 style="margin-top:4px">Folders</h2>
+    <div class="folder-grid">
+      ${folders.map(f => `<div class="folder-tile" data-f="${esc(f)}" title="Open — or drop a text here to move it">
+        <div class="ft-icon">📁</div><div class="ft-name">${esc(f)}</div>
+        <div class="ft-meta">${count(f)} text${count(f) === 1 ? '' : 's'} · ${avg(f)}% mastered</div>
+        <div class="progress"><div style="width:${avg(f)}%"></div></div></div>`).join('')}
+      <div class="folder-tile" data-f="" title="Texts not in a folder"><div class="ft-icon">📄</div><div class="ft-name">Unfiled</div><div class="ft-meta">${count('')} texts</div></div>
+      <button class="folder-tile new" id="newf2"><div class="ft-icon">＋</div><div class="ft-name">New folder</div></button>
     </div>
-    <div id="cards" class="grid"></div>`;
+    <h2>All texts</h2>` : ''}
+    <div id="cards" class="grid"></div>
+    <div class="sub" style="margin-top:14px">Tip: drag a text onto a folder to move it.</div>`;
   const renderCards = () => {
     const q = state.search.toLowerCase();
     let list = DB.texts.filter(t => (state.folder === '__all' || t.folder === state.folder) && (!state.favOnly || t.favorite)
@@ -266,31 +343,50 @@ function viewLibrary(main) {
       mastery: (a, b) => a.mastery - b.mastery, due: (a, b) => (a.nextReview || '9999').localeCompare(b.nextReview || '9999') };
     list.sort(by[state.sort]);
     $('#cards').innerHTML = list.length ? list.map(t => `
-      <div class="card text-card" data-id="${t.id}">
+      <div class="card text-card" data-id="${t.id}" draggable="true">
         <button class="fav ${t.favorite ? 'on' : ''}" data-fav="${t.id}" title="Favorite">${t.favorite ? '★' : '☆'}</button>
+        <button class="mv" data-mvid="${t.id}" title="Move to folder">📁</button>
         <div class="title">${esc(t.title)}</div>
         ${t.author ? `<div class="tag" style="align-self:flex-start">${esc(t.author)}</div>` : ''}
         <div class="preview">${esc(t.body.slice(0, 220))}</div>
         <div class="meta"><div class="progress"><div style="width:${t.mastery}%"></div></div>${t.mastery}%
           ${isDue(t) ? '<span class="tag due">Due</span>' : ''}</div>
-        <div class="meta">${wordCount(t.body)} words${t.folder ? ' · 📁 ' + esc(t.folder) : ''}${t.lastPracticed ? ' · practiced ' + fmtDate(t.lastPracticed) : ''}</div>
+        <div class="meta">${wordCount(t.body)} words${t.folder && !inFolder ? ' · 📁 ' + esc(t.folder) : ''}${t.lastPracticed ? ' · practiced ' + fmtDate(t.lastPracticed) : ''}</div>
       </div>`).join('')
-      : `<div class="empty" style="grid-column:1/-1">No texts here yet.<br><br><button class="btn primary" id="new2">＋ Add your first text</button></div>`;
+      : `<div class="empty" style="grid-column:1/-1">No texts here yet.<br><br><button class="btn primary" id="new2">＋ Add a text${inFolder && state.folder ? ' to this folder' : ''}</button></div>`;
     $('#new2')?.addEventListener('click', () => go('edit', { textId: null }));
   };
   renderCards();
   $('#q').addEventListener('input', e => { state.search = e.target.value; renderCards(); });
   $('#sort').addEventListener('change', e => { state.sort = e.target.value; renderCards(); });
   $('#favonly').addEventListener('click', () => { state.favOnly = !state.favOnly; go('library'); });
-  $$('.chip', main).forEach(c => c.addEventListener('click', () => { state.folder = c.dataset.f; go('library'); }));
+  $('#allback')?.addEventListener('click', () => go('library', { folder: '__all' }));
+  $('#renf')?.addEventListener('click', () => renameFolder(state.folder));
+  $('#delf')?.addEventListener('click', () => deleteFolder(state.folder));
+  const nf = async () => { const n = await newFolderFlow(); if (n) go('library'); };
+  $('#newf').addEventListener('click', nf); $('#newf2')?.addEventListener('click', nf);
+  $$('.folder-tile[data-f]', main).forEach(c => c.addEventListener('click', () => go('library', { folder: c.dataset.f })));
   $('#new').addEventListener('click', () => go('edit', { textId: null }));
   $('#imp').addEventListener('click', importTxt);
   $('#cards').addEventListener('click', e => {
     const f = e.target.closest('[data-fav]');
     if (f) { const t = getText(f.dataset.fav); t.favorite = !t.favorite; save(); renderCards(); return; }
+    const mv = e.target.closest('[data-mvid]');
+    if (mv) { moveDialog(getText(mv.dataset.mvid), () => go('library')); return; }
     const c = e.target.closest('.text-card'); if (c) go('text', { textId: c.dataset.id });
   });
-  $('#q').focus();
+  // drag & drop texts onto folders
+  $('#cards').addEventListener('dragstart', e => { const c = e.target.closest('.text-card'); if (c) { e.dataTransfer.setData('text/memo-id', c.dataset.id); c.classList.add('dragging'); } });
+  $('#cards').addEventListener('dragend', e => e.target.closest?.('.text-card')?.classList.remove('dragging'));
+  $$('.folder-tile[data-f]', main).forEach(tile => {
+    tile.addEventListener('dragover', e => { e.preventDefault(); tile.classList.add('drop'); });
+    tile.addEventListener('dragleave', () => tile.classList.remove('drop'));
+    tile.addEventListener('drop', e => {
+      e.preventDefault(); tile.classList.remove('drop');
+      const t = getText(e.dataTransfer.getData('text/memo-id')); if (!t) return;
+      moveText(t, tile.dataset.f); toast(tile.dataset.f ? `Moved to ${tile.dataset.f}` : 'Moved to Unfiled'); go('library');
+    });
+  });
 }
 
 async function importTxt() {
@@ -338,6 +434,7 @@ function viewText(main) {
   main.innerHTML = `
     <div class="row"><button class="btn small" id="back">← Library</button><span class="spacer"></span>
       <button class="btn small" id="edit">✎ Edit</button>
+      <button class="btn small" id="mvf">📁 ${t.folder ? esc(t.folder) : 'Move to folder'}</button>
       <button class="btn small" id="dup">⧉ Duplicate</button>
       <button class="btn small" id="exp">⬇ Export</button>
       <button class="btn small danger" id="del">🗑 Delete</button></div>
@@ -373,6 +470,7 @@ function viewText(main) {
   $$('.part-bar .chip').forEach(c => c.onclick = () => go('text', { scope: c.dataset.s === 'all' ? 'all' : +c.dataset.s, cumulative: c.dataset.s === 'all' ? false : state.cumulative }));
   $('#cum')?.addEventListener('change', e => go('text', { cumulative: e.target.checked }));
   $$('.mode-tile').forEach(b => b.onclick = () => go('practice', { mode: b.dataset.m }));
+  $('#mvf').onclick = () => moveDialog(t, () => go('text'));
   $('#dup').onclick = () => { const c = newText({ title: t.title + ' (copy)', author: t.author, folder: t.folder, body: t.body, notes: t.notes }); DB.texts.push(c); save(); go('text', { textId: c.id }); toast('Duplicated'); };
   $('#exp').onclick = () => saveFile(t.title.replace(/[\\/:*?"<>|]/g, '_') + '.txt', `${t.title}\n${t.author ? t.author + '\n' : ''}\n${t.body}\n`, [{ name: 'Text', extensions: ['txt'] }]).then(r => r && toast('Exported'));
   $('#del').onclick = async () => {
@@ -384,7 +482,7 @@ function viewText(main) {
 // ---------- Editor ----------
 function viewEdit(main) {
   const t = state.textId ? getText(state.textId) : null;
-  const folders = [...new Set(DB.texts.map(x => x.folder).filter(Boolean))];
+  const folders = allFolders();
   main.innerHTML = `
     <div class="editor">
       <h1>${t ? 'Edit text' : 'New text'}</h1>
@@ -415,6 +513,7 @@ function viewEdit(main) {
     const fields = { title, author: $('#author').value.trim(), folder: $('#folder').value.trim(), body: body.value.replace(/\r/g, '').trim(), notes: $('#notes').value, updated: Date.now() };
     let id;
     if (t) { Object.assign(t, fields); id = t.id; } else { const n = newText(fields); DB.texts.push(n); id = n.id; }
+    if (fields.folder) addFolder(fields.folder);
     save(); toast('Saved'); go('text', { textId: id });
   };
   (t ? body : $('#title')).focus();
@@ -482,10 +581,12 @@ function viewPractice(main) {
       <div class="ph-title"><span class="ph-icon">${M.icon}</span><div><div class="ph-name">${M.name}</div>
         <div class="ph-sub">${GROUPS[gi].title} · ${esc(scope.label)}</div></div></div>
       <span class="spacer"></span>
+      ${gi === 2 ? '<button class="btn small" id="exitfs" title="Leave the test">✕ Exit test</button>' : ''}
     </div>
     <div class="sub" style="margin-bottom:14px">${esc(M.tip)}</div>
     <div id="stage"></div>`;
   $('#back').onclick = () => go('text');
+  $('#exitfs')?.addEventListener('click', () => go('text'));
 
   // time tracking while practicing
   let last = Date.now();
@@ -1100,7 +1201,7 @@ function viewSettings(main) {
   };
   $('#wipe').onclick = async () => {
     if (!await confirmBox('Erase ALL texts, recordings and progress?', 'Erase everything', true)) return;
-    DB = { texts: [], settings: { ...DEFAULT_SETTINGS }, activity: {}, reminded: '' }; save(); await Rec.clear(); applyTheme(); toast('Everything erased'); go('library');
+    DB = { texts: [], settings: { ...DEFAULT_SETTINGS }, activity: {}, folders: [], reminded: '' }; save(); await Rec.clear(); applyTheme(); toast('Everything erased'); go('library');
   };
 }
 async function backup() {
@@ -1114,7 +1215,7 @@ async function restore() {
     const d = JSON.parse(f.content); if (!Array.isArray(d.texts)) throw new Error('Not a Memo backup');
     const merge = await confirmBox(`Restore ${d.texts.length} texts? Choose OK to replace your current library.`, 'Replace library', true);
     if (!merge) return;
-    DB = { texts: d.texts.map(t => ({ ...newText(), ...t })), settings: { ...DEFAULT_SETTINGS, ...d.settings }, activity: d.activity || {}, reminded: '' };
+    DB = { texts: d.texts.map(t => ({ ...newText(), ...t })), settings: { ...DEFAULT_SETTINGS, ...d.settings }, activity: d.activity || {}, folders: d.folders || [], reminded: '' };
     save(); applyTheme(); toast('Library restored'); go('library');
   } catch (e) { toast('Could not restore: ' + e.message, 4000); }
 }
@@ -1136,6 +1237,7 @@ function viewHelp(main) {
   <h2>3. Part by part</h2><p>Pick a part above the three columns. Tick <b>Build up</b> to practice parts 1 through N together — the best way to stitch a long text together.</p>
   <h2>4. Review & streaks</h2><p>Every graded session updates the text's <b>mastery</b> and schedules the next <b>review</b> using spaced repetition. Visit <b>⏰ Review</b> daily, keep your 🔥 streak, and set a daily goal and reminder in Settings.</p>
   <h2>Keyboard shortcuts</h2><p><span class="kbd">Ctrl+N</span> new text · <span class="kbd">Ctrl+O</span> import · <span class="kbd">Ctrl + / −</span> zoom · <span class="kbd">F11</span> full screen</p>
+  <h2>Folders</h2><p>Click <b>📁 New folder</b> in the Library. Drag a text onto a folder to move it, or use the 📁 button on a text. Open a folder to rename or delete it (deleting a folder keeps its texts).</p>
   <h2>Your data</h2><p>Everything is stored privately on this computer. Use <b>Settings → Back up</b> to save a copy or move it to another PC.</p></div>`;
 }
 
@@ -1155,12 +1257,13 @@ function checkReminder() {
 }
 
 // ---------- boot ----------
-$$('.nav-btn').forEach(b => b.addEventListener('click', () => go(b.dataset.view)));
+$$('.nav-btn').forEach(b => b.addEventListener('click', () => go(b.dataset.view, b.dataset.view === 'library' ? { folder: '__all' } : {})));
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 window.native?.onMenu(a => ({ new: () => go('edit', { textId: null }), import: importTxt, backup, restore, help: () => go('help') })[a]?.());
 window.addEventListener('keydown', e => {
   if (e.ctrlKey && e.key.toLowerCase() === 'n' && !window.native) { e.preventDefault(); go('edit', { textId: null }); }
-  if (e.key === 'Escape' && $('#modal-root').innerHTML) $('#modal-root').innerHTML = '';
+  if (e.key === 'Escape' && $('#modal-root').innerHTML) { $('#modal-root').innerHTML = ''; return; }
+  if (e.key === 'Escape' && focusOn && state.mode === 'recite') go('text');
 });
 setInterval(checkReminder, 30000); setTimeout(checkReminder, 3000);
 setInterval(updateSidebar, 60000);

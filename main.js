@@ -53,6 +53,8 @@ ipcMain.handle('open-file', async (_e, { filters, multi }) => {
   return r.filePaths.map(p => ({ name: path.basename(p), content: fs.readFileSync(p, 'utf8') }));
 });
 
+ipcMain.on('fullscreen', (_e, on) => { if (win && win.isFullScreen() !== on) win.setFullScreen(on); });
+
 const menuTemplate = [
   {
     label: 'File',
