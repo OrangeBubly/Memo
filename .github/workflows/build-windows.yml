@@ -9,11 +9,25 @@ on:
 jobs:
   build-and-test:
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Read version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "Building Memo $v"
+          # A release tag must match package.json, so the installer and the release never disagree.
+          if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -ne "v$v") {
+            "FAIL  tag ${{ github.ref_name }} does not match package.json version $v (expected v$v)"; exit 1
+          }
 
       - name: Install dependencies
         run: npm ci
@@ -27,7 +41,7 @@ jobs:
         run: |
           $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
           if (-not (Test-Path $makensis)) { choco install nsis -y --no-progress; $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe" }
-          & $makensis /V2 /DVERSION=1.0.0 build\memo-installer.nsi
+          & $makensis /V2 /DVERSION=${{ steps.ver.outputs.version }} build\memo-installer.nsi
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build portable exe
@@ -36,7 +50,7 @@ jobs:
       - name: Silent install
         shell: pwsh
         run: |
-          Start-Process -FilePath "dist\Memo-Setup-1.0.0.exe" -ArgumentList '/S' -Wait
+          Start-Process -FilePath "dist\Memo-Setup-${{ steps.ver.outputs.version }}.exe" -ArgumentList '/S' -Wait
           $dir = "$env:LOCALAPPDATA\Programs\Memo"
           $ok = $true
           foreach ($p in @("$dir\Memo.exe", "$dir\Uninstall Memo.exe", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Memo.lnk")) {
@@ -64,7 +78,7 @@ jobs:
             for ($i = 0; $i -lt 60 -and (Test-Path "$dir\Memo.exe"); $i++) { Start-Sleep 1 }
           }
           if (Test-Path "$dir\Memo.exe") { "FAIL  app files still present after uninstall"; exit 1 } else { "PASS  app files removed" }
-          if (Test-Path "$env:LOCALAPPDATA\..\Roaming\Microsoft\Windows\Start Menu\Programs\Memo.lnk") { "FAIL  Start Menu shortcut left behind" } else { "PASS  Start Menu shortcut removed" }
+          if (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Memo.lnk") { "FAIL  Start Menu shortcut left behind" } else { "PASS  Start Menu shortcut removed" }
           if (Test-Path "$env:APPDATA\Memo") { "PASS  user data kept at $env:APPDATA\Memo" } else { "WARN  no user data folder found at $env:APPDATA\Memo" }
 
       - uses: actions/upload-artifact@v4
@@ -79,3 +93,26 @@ jobs:
           path: |
             dist/Memo-Setup-*.exe
             dist/Memo-Portable-*.exe
+
+  # Runs only for version tags (v1.0.0, v1.1.0, ...) and only if every build + Windows test above passed.
+  release:
+    needs: build-and-test
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Memo-Windows
+          path: release-files
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Memo ${{ github.ref_name }}
+          body_path: .github/release-notes.md
+          files: |
+            release-files/Memo-Setup-${{ needs.build-and-test.outputs.version }}.exe
+            release-files/Memo-Portable-${{ needs.build-and-test.outputs.version }}.exe
+          fail_on_unmatched_files: true
