@@ -226,13 +226,13 @@ function go(view, extra = {}) {
 }
 
 // Tests run full screen with the sidebar hidden.
-let focusOn = false;
+let focusOn = false, weMadeFullScreen = false;
 function setFocusMode(on) {
   document.body.classList.toggle('focus', on);
   if (on === focusOn) return; focusOn = on;
-  if (window.native?.setFullScreen) window.native.setFullScreen(on);
-  else if (on && !document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
-  else if (!on && document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+  if (window.native?.setFullScreen) return window.native.setFullScreen(on); // main process keeps prior full screen
+  if (on) { weMadeFullScreen = !document.fullscreenElement; if (weMadeFullScreen) document.documentElement.requestFullscreen?.().catch(() => {}); }
+  else { if (weMadeFullScreen && document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); weMadeFullScreen = false; }
 }
 
 function updateSidebar() {
@@ -943,10 +943,12 @@ function typingMode(ctx, full, opts = {}) {
   function bumpCombo(ok) {
     combo = ok ? combo + 1 : 0; maxCombo = Math.max(maxCombo, combo);
     const el = $('#tcombo'); if (!el) return;
-    el.textContent = combo >= 3 ? `🔥 ${combo} combo` : '';
+    // Calm by design: appears quietly after 5 in a row, no pop on every word,
+    // just a soft pulse at milestones (25, 50, 75...).
+    el.textContent = combo >= 5 ? `🔥 ${combo}` : '';
+    el.classList.toggle('show', combo >= 5);
     el.classList.toggle('hot', combo >= 25);
-    el.classList.remove('bump'); void el.offsetWidth; if (combo >= 3) el.classList.add('bump');
-    if (combo && combo % 25 === 0) sfx('combo');
+    if (combo && combo % 25 === 0) { el.classList.remove('ms'); void el.offsetWidth; el.classList.add('ms'); sfx('combo'); }
   }
   const VIS = [['hidden', 'Hidden'], ['initials', 'First letters'], ['faint', 'Show text']];
   let vis = DB.settings.typeVis || 'hidden';

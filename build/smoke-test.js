@@ -94,6 +94,17 @@ const shot = async (win, name) => { await win.evaluate(() => { document.querySel
   const fs2 = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFullScreen());
   check('Leaving the test exits full screen', !fs2);
 
+  // If the window was already full screen before a test, it must stay full screen afterwards.
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setFullScreen(true)); await sleep(1200);
+  await win.click('[data-m=typefull]'); await sleep(1000);
+  await win.click('#exitfs'); await sleep(1200);
+  const fs3 = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFullScreen());
+  check('Full screen chosen before a test stays on after leaving it', fs3);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setFullScreen(false)); await sleep(1200);
+  // Combo is calm: hidden until 5 in a row, no pop animation on each word
+  check('Combo counter uses the calm style', await win.evaluate(() => { const st = document.createElement('span'); st.className = 'combo show'; document.body.appendChild(st);
+    const cs = getComputedStyle(st); const ok = cs.animationName === 'none' && parseFloat(cs.fontSize) <= 15; st.remove(); return ok; }));
+
   // Create a text + change theme, then restart and check both persisted
   await win.click('[data-view=library]'); await win.click('#new');
   await win.fill('#title', 'Smoke Test Poem'); await win.fill('#body', 'Roses grow by the garden wall,\nlistening to the evening call.');

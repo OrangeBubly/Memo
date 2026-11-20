@@ -499,3 +499,11 @@ body.ty-faded .practice-head, body.ty-faded #main > .sub, body.ty-faded .ty-top,
 .practice-head, #main > .sub, .ty-top, .ty-help, .ty-bar { transition: opacity .25s; }
 
 .cz-prevcol .desc { font-size: 12px; color: var(--muted); line-height: 1.4; }
+
+/* ===== Combo: subtle (overrides the earlier, bouncier style) ===== */
+.combo { margin-left: 12px; font-size: 14px; font-weight: 600; color: var(--muted); opacity: 0; transition: opacity .4s, color .6s; text-shadow: none; }
+.combo.show { opacity: .85; }
+.combo.bump { animation: none; }
+.combo.hot { color: var(--accent); text-shadow: none; }
+.combo.ms { animation: comboms .6s ease-out; }
+@keyframes comboms { 30% { transform: scale(1.08); opacity: 1; } }

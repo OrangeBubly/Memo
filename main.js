@@ -55,7 +55,19 @@ ipcMain.handle('open-file', async (_e, { filters, multi }) => {
   return r.filePaths.map(p => ({ name: path.basename(p), content: fs.readFileSync(p, 'utf8') }));
 });
 
-ipcMain.on('fullscreen', (_e, on) => { if (win && win.isFullScreen() !== on) win.setFullScreen(on); });
+// Tests go full screen. If the window was already full screen before the test (e.g. F11),
+// leave it that way afterwards; only undo full screen that the test itself turned on.
+let testMadeFullScreen = false;
+ipcMain.on('fullscreen', (_e, on) => {
+  if (!win) return;
+  if (on) {
+    testMadeFullScreen = !win.isFullScreen();
+    if (testMadeFullScreen) win.setFullScreen(true);
+  } else {
+    if (testMadeFullScreen && win.isFullScreen()) win.setFullScreen(false);
+    testMadeFullScreen = false;
+  }
+});
 
 const menuTemplate = [
   {
