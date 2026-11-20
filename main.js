@@ -11,6 +11,7 @@ function createWindow() {
     minWidth: 760,
     minHeight: 560,
     title: 'Memo',
+    icon: path.join(__dirname, 'src', 'icon.png'),
     backgroundColor: '#f7f5f0',
     autoHideMenuBar: true,
     webPreferences: {

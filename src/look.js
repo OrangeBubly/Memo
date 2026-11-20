@@ -168,7 +168,7 @@ function game() {
 function level(xp = game().xp) { let L = 1; while (xp >= xpForLevel(L + 1)) L++; return L; }
 function rankOf(L) { let r = RANKS[0][1]; for (const [l, n] of RANKS) if (L >= l) r = n; return r; }
 function levelProgress(xp = game().xp) { const L = level(xp), a = xpForLevel(L), b = xpForLevel(L + 1); return { L, into: xp - a, need: b - a, pct: (xp - a) / (b - a) * 100 }; }
-const TEST_MODES = ['type', 'typefull', 'recite'];
+const TEST_MODES = ['type', 'typefull', 'recite', 'weak'];
 const FAM_MODES = ['read', 'initials', 'hide'];
 
 const ACHIEVEMENTS = [
@@ -196,6 +196,7 @@ const ACHIEVEMENTS = [
   { id: 'goal7', icon: '🎖️', name: 'Goal Getter', desc: 'Hit your daily goal on 7 days', test: g => Object.keys(g.stats.goalDays).length >= 7 },
   { id: 'quests10', icon: '📋', name: 'Quest Hunter', desc: 'Complete 10 daily quests', test: g => g.stats.quests >= 10 },
   { id: 'review5', icon: '🔁', name: 'Faithful', desc: 'Complete 5 reviews of due texts', test: g => g.stats.reviews >= 5 },
+  { id: 'patched', icon: '🩹', name: 'Patched Up', desc: 'Clear 10 weak spots', test: g => (g.stats.weakCleared || 0) >= 10 },
   { id: 'level5', icon: '⭐', name: 'Rising Star', desc: 'Reach level 5', test: g => level(g.xp) >= 5 },
   { id: 'level10', icon: '🌟', name: 'Star Performer', desc: 'Reach level 10', test: g => level(g.xp) >= 10 },
   { id: 'level20', icon: '💫', name: 'Sage', desc: 'Reach level 20', test: g => level(g.xp) >= 20 }
@@ -211,6 +212,7 @@ const QUESTS = [
   { id: 'combo15', icon: '🔗', text: 'Reach a 15-word combo', target: 15, xp: 30, max: true, on: e => e.type === 'session' ? e.combo || 0 : 0 },
   { id: 'review1', icon: '⏰', text: 'Review a text that is due', target: 1, xp: 40, on: e => e.type === 'session' && e.wasDue ? 1 : 0 },
   { id: 'fam2', icon: '📖', text: 'Do 2 Familiarize activities', target: 2, xp: 20, on: e => e.type === 'session' && FAM_MODES.includes(e.mode) ? 1 : 0 },
+  { id: 'weak1', icon: '🎯', text: 'Drill your weak spots once', target: 1, xp: 35, on: e => e.type === 'session' && e.mode === 'weak' ? 1 : 0 },
   { id: 'record1', icon: '🎙️', text: 'Record a recitation', target: 1, xp: 25, on: e => e.type === 'recording' ? 1 : 0 }
 ];
 function todaysQuests() {
@@ -279,6 +281,7 @@ function gameEvent(type, d = {}) {
     if (d.wpm && d.mode === 'typefull') g.stats.bestWpm = Math.max(g.stats.bestWpm, d.wpm);
     if (d.combo) g.stats.bestCombo = Math.max(g.stats.bestCombo, d.combo);
     if (d.wasDue) g.stats.reviews++;
+    if (d.weakCleared) g.stats.weakCleared = (g.stats.weakCleared || 0) + d.weakCleared;
     const base = TEST_MODES.includes(d.mode) ? 25 : FAM_MODES.includes(d.mode) ? 10 : 15;
     const size = 1 + Math.min(d.words || 0, 400) / 150;
     const streakMul = 1 + Math.min(streak(), 10) * 0.05;

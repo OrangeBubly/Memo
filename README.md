@@ -18,13 +18,18 @@ A Windows desktop app for learning poems, speeches, scripture, lines and songs w
 - **Progress**: mastery per text and per part, session history, streaks, daily goal, 30-day chart
 - **Spaced-repetition review** with due badges and a daily desktop reminder
 - **Settings**: light/dark/sepia/system themes, text size, voice and speed, backup and restore
-- All data stays on your PC
+- **🎯 Weak Spots**: tracks every word you miss across modes, shows a heatmap, and drills the lines you keep failing until they stick
+- **Customize**: 14 themes, accents, fonts, cursor styles (line / block / underscore / box), key sounds, backgrounds
+- **Gamification**: XP, levels, daily quests, achievements, unlockable themes and sounds
+- All data stays on your PC (in `%APPDATA%\Memo`) and survives reinstalls
 
 ## Run / build
 ```
 npm install
 npm start            # run in development
 npm run pack:win     # dist/Memo-win32-x64/Memo.exe
-npm run dist:win     # installer + portable .exe (run on Windows)
+npm run dist:win     # Memo-Setup.exe + Memo-Portable.exe (on Windows)
+npm run dist:win:linux  # same, from Linux without Wine (needs makensis)
+npm run icons        # re-render build/icon.svg -> icon.png / icon.ico
 ```
 The GitHub Actions workflow `Build Windows app` builds the installer and portable `.exe` on every push; download them from the run's **Artifacts**.

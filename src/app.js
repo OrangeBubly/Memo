@@ -213,7 +213,7 @@ function go(view, extra = {}) {
   runCleanup(); stopSpeech();
   Object.assign(state, extra, { view });
   $$('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view || (view === 'text' || view === 'edit' || view === 'practice') && b.dataset.view === 'library'));
-  setFocusMode(view === 'practice' && GROUPS[2].modes.includes(state.mode));
+  setFocusMode(view === 'practice' && (GROUPS[2].modes.includes(state.mode) || state.mode === 'weak'));
   const main = $('#main'); main.scrollTop = 0;
   ({ library: viewLibrary, review: viewReview, stats: viewStats, settings: viewSettings, help: viewHelp,
      text: viewText, edit: viewEdit, practice: viewPractice, profile: viewProfile, customize: viewCustomize })[view](main);
@@ -455,6 +455,7 @@ function viewText(main) {
         <input type="checkbox" id="cum" ${state.cumulative ? 'checked' : ''} ${state.scope === 'all' ? 'disabled' : ''}> Build up from part 1</label>
     </div>
     ${state.scope !== 'all' ? `<div class="part-preview">${esc(scopeInfo(P).secs.map(s => s.lines.map(l => l.text).join(' / ')).join('  ·  ').slice(0, 180))}…</div>` : ''}` : ''}
+    ${weakBannerHtml(t, P, scopeInfo(P))}
     <div class="groups">${GROUPS.map((g, gi) => `
       <div class="group">
         <div class="group-head"><span class="step">${gi + 1}</span><div><div class="gt">${g.title}</div><div class="gs">${g.sub}</div></div>
@@ -474,6 +475,7 @@ function viewText(main) {
   $$('.part-bar .chip').forEach(c => c.onclick = () => go('text', { scope: c.dataset.s === 'all' ? 'all' : +c.dataset.s, cumulative: c.dataset.s === 'all' ? false : state.cumulative }));
   $('#cum')?.addEventListener('change', e => go('text', { cumulative: e.target.checked }));
   $$('.mode-tile').forEach(b => b.onclick = () => go('practice', { mode: b.dataset.m }));
+  $$('[data-weak]').forEach(b => b.onclick = () => go('practice', { mode: 'weak' }));
   $('#mvf').onclick = () => moveDialog(t, () => go('text'));
   $('#dup').onclick = () => { const c = newText({ title: t.title + ' (copy)', author: t.author, folder: t.folder, body: t.body, notes: t.notes }); DB.texts.push(c); save(); go('text', { textId: c.id }); toast('Duplicated'); };
   $('#exp').onclick = () => saveFile(t.title.replace(/[\\/:*?"<>|]/g, '_') + '.txt', `${t.title}\n${t.author ? t.author + '\n' : ''}\n${t.body}\n`, [{ name: 'Text', extensions: ['txt'] }]).then(r => r && toast('Exported'));
@@ -549,6 +551,7 @@ const MODES = {
   lines: { icon: '🃏', name: 'Line Cards', tip: 'See one line, recall the next, then reveal and grade yourself.' },
   type: { icon: '⌨️', name: 'Type Initials', tip: 'Type the first letter of each word, from memory.' },
   typefull: { icon: '✍️', name: 'Type Words', tip: 'Type every word in full, from memory. Space moves to the next word.' },
+  weak: { icon: '🎯', name: 'Weak Spots', tip: 'Drill only the lines you keep getting wrong, until they stick.' },
   recite: { icon: '🎙️', name: 'Recite & Record', tip: 'Recite out loud while recording yourself, then play it back and check against the text.' }
 };
 for (const m of Object.values(MODES)) m.label = `${m.icon} ${m.name}`;
@@ -583,9 +586,9 @@ function viewPractice(main) {
     <div class="practice-head">
       <button class="btn small" id="back">← ${esc(t.title)}</button>
       <div class="ph-title"><span class="ph-icon">${M.icon}</span><div><div class="ph-name">${M.name}</div>
-        <div class="ph-sub">${GROUPS[gi].title} · ${esc(scope.label)}</div></div></div>
+        <div class="ph-sub">${gi >= 0 ? GROUPS[gi].title : 'Targeted practice'} · ${esc(scope.label)}</div></div></div>
       <span class="spacer"></span>
-      ${gi === 2 ? '<button class="btn small" id="exitfs" title="Leave the test">✕ Exit test</button>' : ''}
+      ${gi === 2 || state.mode === 'weak' ? '<button class="btn small" id="exitfs" title="Leave the test">✕ Exit test</button>' : ''}
     </div>
     <div class="sub" style="margin-bottom:14px">${esc(M.tip)}</div>
     <div id="stage"></div>`;
@@ -620,7 +623,7 @@ function setKeyHandler(fn) { window.addEventListener('keydown', fn); cleanup.pus
 function showDone(ctx, score, extra, html = '') {
   const pct = Math.round(score * 100);
   const msg = pct >= 95 ? 'Perfect! You know this by heart. 🎉' : pct >= 80 ? 'Great job! Almost there.' : pct >= 50 ? 'Good progress — keep going.' : 'Keep practicing — it gets easier every time.';
-  const nextMode = MODE_ORDER[MODE_ORDER.indexOf(state.mode) + 1];
+  const mi = MODE_ORDER.indexOf(state.mode), nextMode = mi >= 0 ? MODE_ORDER[mi + 1] : null;
   ctx.stage.insertAdjacentHTML('afterbegin', `<div class="card done-box" id="donebox">
     ${html || `<div class="big">${pct}%</div>`}<div style="font-size:18px;margin:8px 0">${msg}</div>
     <div class="sub">${extra} Mastery now ${ctx.t.mastery}% · next review ${fmtDate(ctx.t.nextReview)}</div>
@@ -728,6 +731,7 @@ const PRACTICE = {
     $('#reshuffle').onclick = () => { t.hideSeed = (t.hideSeed || 0) + 1; save(); go('practice'); };
     $('#rd').addEventListener('click', e => { const w = e.target.closest('.w.clickable'); if (w) { const i = +w.dataset.w; peeks.has(i) ? peeks.delete(i) : peeks.add(i); draw(); } });
     $('#rate').onclick = () => {
+      ws.filter(w => rank.get(w) < t.hideLevel / 100).forEach(w => markWord(t, w, !peeks.has(w), peeks.has(w) ? 1 : 0.3));
       const hidden = ws.filter(w => rank.get(w) < t.hideLevel / 100).length;
       const score = hidden ? (hidden - [...peeks].length) / hidden * (0.4 + 0.6 * t.hideLevel / 100) : 0.3;
       ctx.finish(score, `${peeks.size} peek${peeks.size === 1 ? '' : 's'} at ${t.hideLevel}% hidden.`);
@@ -736,6 +740,7 @@ const PRACTICE = {
   },
 
   // --- Type first letters ---
+  weak(ctx) { weakMode(ctx); },
   type(ctx) { typingMode(ctx, false); },
   typefull(ctx) { typingMode(ctx, true); },
 
@@ -768,7 +773,7 @@ const PRACTICE = {
       $('#miss')?.addEventListener('click', () => grade(false));
     };
     const reveal = () => { shown = true; draw(); if (DB.settings.autoSpeakLines) speak(lines[i].text); };
-    const grade = ok => { if (ok) got++; i++; shown = false; draw(); };
+    const grade = ok => { if (ok) got++; lines[i].wordIdx.forEach(w => markWord(ctx.t, w, ok, ok ? 0.5 : 1)); i++; shown = false; draw(); };
     setKeyHandler(e => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
       if (e.code === 'Space' && !shown && i < lines.length) { e.preventDefault(); reveal(); }
@@ -780,7 +785,7 @@ const PRACTICE = {
   // --- Unscramble lines ---
   scramble(ctx) {
     const { scope, stage } = ctx;
-    const lines = scopeLines(scope).filter(l => l.wordIdx.length).map((l, i) => ({ text: l.text, i }));
+    const lines = scopeLines(scope).filter(l => l.wordIdx.length).map((l, i) => ({ text: l.text, i, wordIdx: l.wordIdx }));
     if (lines.length < 2) { stage.innerHTML = '<div class="card">This part has only one line. Choose the whole text or a larger part to unscramble.</div>'; return; }
     // Long texts are done in chunks of 8 lines.
     const CH = 8; let chunkStart = 0, next = 0, mistakes = 0, pool = [];
@@ -797,7 +802,7 @@ const PRACTICE = {
           if (next >= lines.length) { stage.innerHTML = `<div class="reading">${lines.map(l => `<div class="line placed">${esc(l.text)}</div>`).join('')}</div>`; return ctx.finish(Math.max(0, 1 - mistakes / lines.length), `${mistakes} mistake${mistakes === 1 ? '' : 's'}.`); }
           if (!pool.length) { chunkStart += CH; newChunk(); }
           draw();
-        } else { mistakes++; b.classList.remove('wrong'); void b.offsetWidth; b.classList.add('wrong'); $('.sub', stage).textContent = `Placed ${next} of ${lines.length} · mistakes ${mistakes}`; }
+        } else { mistakes++; lines[next].wordIdx.forEach(w => markWord(ctx.t, w, false, 0.4)); b.classList.remove('wrong'); void b.offsetWidth; b.classList.add('wrong'); $('.sub', stage).textContent = `Placed ${next} of ${lines.length} · mistakes ${mistakes}`; }
       });
     };
     newChunk(); draw();
@@ -828,7 +833,7 @@ const PRACTICE = {
       let answered = false;
       const answer = (btn) => {
         if (answered) return; answered = true;
-        const ok = norm(btn.dataset.o) === tw.n; if (ok) right++;
+        const ok = norm(btn.dataset.o) === tw.n; if (ok) right++; markWord(ctx.t, target, ok, ok ? 1 : 1.5);
         btn.classList.add(ok ? 'right' : 'wrong');
         $$('.quiz-opts .btn', stage).forEach(b => { if (norm(b.dataset.o) === tw.n) b.classList.add('right'); });
         $('.blank-slot', stage).textContent = tw.s;
@@ -919,7 +924,7 @@ function chEq(typed, target) {
   return foldCh(typed).toLowerCase() === foldCh(target).toLowerCase();
 }
 
-function typingMode(ctx, full) {
+function typingMode(ctx, full, opts = {}) {
   const { P, scope, stage } = ctx;
   const ws = scopeWords(scope);
   const W = (p) => P.words[ws[p]].s;
@@ -958,7 +963,7 @@ function typingMode(ctx, full) {
       <button class="btn small" id="restart">↻ Restart <span class="kbd">Esc</span></button>
     </div>
     <div class="ty-bar"><div id="tbar"></div></div>
-    <div class="typer" id="typer" data-vis="${vis}" tabindex="0">
+    <div class="typer ${opts.drill ? 'drill' : ''}" id="typer" data-vis="${vis}" tabindex="0">
       <div class="ty-inner" id="tinner">${body}<div class="${caretClasses(S().caretBlink === 'idle' ? 'idle' : '')}" id="caret"></div></div>
     </div>
     <div class="ty-help">${full
@@ -1037,7 +1042,7 @@ function typingMode(ctx, full) {
   function showSeps(i) { $$(`.ts[data-after="${i}"]`, inner).forEach(s => s.classList.add('on')); }
 
   function submit(result) {
-    res[pos] = result; showSeps(pos); renderWord(pos); bumpCombo(result === 'ok');
+    res[pos] = result; showSeps(pos); renderWord(pos); bumpCombo(result === 'ok'); markWord(ctx.t, ws[pos], result === 'ok');
     pos++; wrongHere = 0;
     if (pos >= ws.length) return finish();
     renderWord(pos); updateStats(); moveCaret();
