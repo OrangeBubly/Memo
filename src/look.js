@@ -37,7 +37,7 @@ const CARETS = { line: 'Line', block: 'Block', underline: 'Underscore', box: 'Bo
 const LOOK_DEFAULTS = {
   theme: 'system', accent: '', uiFont: 'segoe', readFont: 'serif', typeFont: 'consolas',
   caretStyle: 'line', caretBlink: 'idle', caretSpeed: 'smooth', caretWidth: 3, caretColor: 'accent', caretCustom: '#ff3366',
-  typeWidth: 'normal', typeLines: 4, liveStats: true, combo: true, confetti: true, sound: 'off', soundVol: 0.5, errorSound: true,
+  typeWidth: 'normal', typeLines: 4, liveStats: true, combo: true, confetti: true, sound: 'studio', soundVol: 0.8, errorSound: true, sfxOn: true,
   radius: 'normal', uiScale: 1, bg: 'plain', compact: false, reduceMotion: false
 };
 function S() { return DB.settings; }
@@ -96,26 +96,70 @@ function placeCaret(caret, x, y, w, h, atEnd) {
   caret.style.transform = `translate(${cx}px, ${cy}px)`;
 }
 
-// ---------- Sound (synthesized, no files) ----------
-let AC = null;
-function audio() { try { return AC ||= new (window.AudioContext || window.webkitAudioContext)(); } catch { return null; } }
-function tone({ type = 'sine', f = 440, f2, dur = 0.06, vol = 0.3, delay = 0 }) {
+// ---------- Sound: recorded keyboard packs + synthesized effects ----------
+let AC = null, MASTER = null;
+function audio() {
+  try {
+    if (!AC) {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      // master bus with a limiter so loud settings never distort
+      const comp = AC.createDynamicsCompressor();
+      comp.threshold.value = -6; comp.knee.value = 6; comp.ratio.value = 8; comp.attack.value = 0.001; comp.release.value = 0.08;
+      MASTER = AC.createGain(); MASTER.connect(comp).connect(AC.destination);
+    }
+    if (AC.state === 'suspended') AC.resume();   // browsers/Electron may start audio suspended
+    return AC;
+  } catch { return null; }
+}
+const vol = () => Math.max(0, Math.min(1, S().soundVol ?? 0.8));
+function tone({ type = 'sine', f = 440, f2, dur = 0.06, vol: v = 0.3, delay = 0 }) {
   const a = audio(); if (!a) return;
   const t = a.currentTime + delay, o = a.createOscillator(), g = a.createGain();
   o.type = type; o.frequency.setValueAtTime(f, t); if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + dur);
-  g.gain.setValueAtTime(vol * S().soundVol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(g).connect(a.destination); o.start(t); o.stop(t + dur + 0.02);
+  g.gain.setValueAtTime(Math.min(1, v * 2 * vol()) + 0.0001, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g).connect(MASTER); o.start(t); o.stop(t + dur + 0.02);
 }
-function noise({ dur = 0.03, vol = 0.3, freq = 2500, q = 0.8, type = 'highpass', delay = 0 }) {
+function noise({ dur = 0.03, vol: v = 0.3, freq = 2500, q = 0.8, type = 'highpass', delay = 0 }) {
   const a = audio(); if (!a) return;
   const len = Math.floor(a.sampleRate * dur), buf = a.createBuffer(1, len, a.sampleRate), d = buf.getChannelData(0);
   for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len) ** 2;
   const src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain(), t = a.currentTime + delay;
-  src.buffer = buf; f.type = type; f.frequency.value = freq; f.Q.value = q; g.gain.value = vol * S().soundVol;
-  src.connect(f).connect(g).connect(a.destination); src.start(t);
+  src.buffer = buf; f.type = type; f.frequency.value = freq; f.Q.value = q; g.gain.value = Math.min(1.5, v * 2 * vol());
+  src.connect(f).connect(g).connect(MASTER); src.start(t);
 }
+
+// Recorded keystroke packs (src/sounds.js). Decoded once into AudioBuffers.
+const packBuffers = {}, packLoading = {}, packLast = {};
+function loadPack(key) {
+  if (packBuffers[key] || packLoading[key]) return packLoading[key];
+  if (typeof SAMPLE_PACKS === 'undefined' || !SAMPLE_PACKS[key]) return;
+  const a = audio(); if (!a) return;
+  packLoading[key] = Promise.all(SAMPLE_PACKS[key].samples.map(b64 => {
+    const bin = atob(b64), u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return new Promise((res) => a.decodeAudioData(u8.buffer, res, () => res(null)));
+  })).then(list => { packBuffers[key] = list.filter(Boolean); return packBuffers[key]; });
+  return packLoading[key];
+}
+function playSample(key, { heavy = false } = {}) {
+  const a = audio(); if (!a) return;
+  const bufs = packBuffers[key];
+  if (!bufs?.length) { loadPack(key); return; }
+  let i = Math.floor(Math.random() * bufs.length);
+  if (bufs.length > 1 && i === packLast[key]) i = (i + 1) % bufs.length;   // never the same hit twice in a row
+  packLast[key] = i;
+  const src = a.createBufferSource(), g = a.createGain();
+  src.buffer = bufs[i];
+  src.playbackRate.value = (heavy ? 0.9 : 1) * (0.96 + Math.random() * 0.08); // small natural variation
+  g.gain.value = 1.6 * vol() * (heavy ? 1.15 : 0.92 + Math.random() * 0.16);
+  src.connect(g).connect(MASTER); src.start();
+}
+
 const SOUNDS = {
   off: { name: 'Off' },
+  clicky: { name: 'Clicky', rec: true, play: (o) => playSample('clicky', o) },
+  studio: { name: 'Studio', rec: true, play: (o) => playSample('studio', o) },
+  thock: { name: 'Thocky', rec: true, play: (o) => playSample('thock', o) },
   click: { name: 'Click', play: () => noise({ dur: 0.025, vol: 0.5, freq: 3000 }) },
   typewriter: { name: 'Typewriter', play: () => { noise({ dur: 0.045, vol: 0.6, freq: 1400, type: 'bandpass', q: 1.2 }); tone({ f: 110, dur: 0.05, vol: 0.25 }); } },
   mech: { name: 'Mechanical', play: () => { noise({ dur: 0.018, vol: 0.55, freq: 4200 }); noise({ dur: 0.03, vol: 0.35, freq: 600, type: 'lowpass', delay: 0.012 }); } },
@@ -126,15 +170,19 @@ const SOUNDS = {
   piano: { name: 'Piano', play: () => { const n = [523, 587, 659, 784, 880][Math.floor(Math.random() * 5)]; tone({ type: 'triangle', f: n, dur: 0.18, vol: 0.25 }); }, unlock: { level: 12 } }
 };
 function soundUnlocked(k) { const u = SOUNDS[k]?.unlock; return !u || level() >= u.level; }
-function keySound() { const k = S().sound; if (k !== 'off' && soundUnlocked(k)) SOUNDS[k]?.play?.(); }
-function errSound() { if (S().sound !== 'off' && S().errorSound) tone({ type: 'sawtooth', f: 150, f2: 90, dur: 0.12, vol: 0.12 }); }
+function keySound(opts) { const k = S().sound; if (k && k !== 'off' && soundUnlocked(k)) SOUNDS[k]?.play?.(opts); }
+function warmSounds() { const k = S().sound; if (SOUNDS[k]?.rec) loadPack(k); }
+// Mistake + celebration sounds have their own switch, so they work even with key sounds off.
+function errSound() { if (S().sfxOn !== false && S().errorSound) tone({ type: 'sawtooth', f: 150, f2: 90, dur: 0.12, vol: 0.12 }); }
 function sfx(kind) {
-  if (S().sound === 'off') return;
+  if (S().sfxOn === false) return;
   if (kind === 'done') [523, 659, 784, 1046].forEach((f, i) => tone({ type: 'triangle', f, dur: 0.22, vol: 0.2, delay: i * 0.08 }));
   if (kind === 'level') [392, 523, 659, 784, 1046, 1318].forEach((f, i) => tone({ type: 'triangle', f, dur: 0.3, vol: 0.22, delay: i * 0.09 }));
   if (kind === 'ach') [880, 1175].forEach((f, i) => tone({ type: 'sine', f, dur: 0.25, vol: 0.2, delay: i * 0.1 }));
   if (kind === 'combo') tone({ type: 'triangle', f: 660, f2: 1320, dur: 0.12, vol: 0.18 });
 }
+// Browsers only allow audio after the first click/keypress: unlock + preload on the first gesture.
+['pointerdown', 'keydown'].forEach(ev => window.addEventListener(ev, () => { audio(); warmSounds(); }, { once: true, capture: true }));
 
 // ---------- Confetti ----------
 function confetti(power = 1) {
@@ -404,10 +452,13 @@ function viewCustomize(main) {
       <div class="cz-row"><div><b>Live stats</b><div class="desc">WPM, accuracy and timer while typing</div></div>${tog('livestats', s.liveStats)}</div>
       <div class="cz-row"><div><b>Combo counter</b><div class="desc">Count words in a row without mistakes</div></div>${tog('combo', s.combo)}</div>
       <div class="cz-row"><div><b>Confetti</b><div class="desc">Celebrate great scores and level-ups</div></div>${tog('confetti', s.confetti)}</div>
-      <div class="cz-row"><div><b>Key sounds</b></div><div class="sound-row">${Object.entries(SOUNDS).map(([k, so]) => { const lock = so.unlock && L < so.unlock.level;
-        return `<button class="chip ${s.sound === k ? 'active' : ''}" data-snd="${k}" ${lock ? `disabled title="Unlocks at level ${so.unlock.level}"` : ''}>${lock ? '🔒 ' : ''}${so.name}</button>`; }).join('')}</div></div>
-      <div class="cz-row"><div><b>Volume</b></div><input type="range" id="vol" min="0" max="1" step="0.05" value="${s.soundVol}"></div>
-      <div class="cz-row"><div><b>Mistake sound</b></div>${tog('errsnd', s.errorSound)}</div>
+      <div class="cz-row"><div><b>Key sounds</b><div class="desc">Recorded keyboards, or synthesized sounds. Click one to hear it.</div></div><div class="sound-col">
+        <div class="sound-row"><button class="chip ${s.sound === 'off' ? 'active' : ''}" data-snd="off">Off</button><span class="sound-lbl">🎙️ Recorded</span>${['clicky', 'studio', 'thock'].map(k => `<button class="chip ${s.sound === k ? 'active' : ''}" data-snd="${k}">${SOUNDS[k].name}</button>`).join('')}</div>
+        <div class="sound-row"><span class="sound-lbl">🎛️ Synth</span>${Object.entries(SOUNDS).filter(([k, so]) => !so.rec && k !== 'off').map(([k, so]) => { const lock = so.unlock && L < so.unlock.level;
+          return `<button class="chip ${s.sound === k ? 'active' : ''}" data-snd="${k}" ${lock ? `disabled title="Unlocks at level ${so.unlock.level}"` : ''}>${lock ? '🔒 ' : ''}${so.name}</button>`; }).join('')}</div></div></div>
+      <div class="cz-row"><div><b>Volume</b></div><div class="row vol-row"><input type="range" id="vol" min="0" max="1" step="0.05" value="${s.soundVol}"><span id="volv">${Math.round(s.soundVol * 100)}%</span><button class="btn small" id="voltest">▶ Test</button></div></div>
+      <div class="cz-row"><div><b>Sound effects</b><div class="desc">Finish chime, achievements and level-ups</div></div>${tog('sfxon', s.sfxOn !== false)}</div>
+      <div class="cz-row"><div><b>Mistake sound</b><div class="desc">Plays when a word is submitted wrong</div></div>${tog('errsnd', s.errorSound)}</div>
     </div>
 
     <h2>Interface</h2>
@@ -436,8 +487,12 @@ function viewCustomize(main) {
   $('#livestats').onchange = e => set('liveStats', e.target.checked);
   $('#combo').onchange = e => set('combo', e.target.checked);
   $('#confetti').onchange = e => { set('confetti', e.target.checked); if (e.target.checked) confetti(0.6); };
-  $$('[data-snd]').forEach(b => b.onclick = () => { set('sound', b.dataset.snd, true); keySound(); });
-  $('#vol').oninput = e => { set('soundVol', +e.target.value); keySound(); };
+  const demoKeys = () => { audio(); warmSounds(); const k = S().sound; const go = () => [0, 90, 170, 260, 330].forEach(t => setTimeout(() => keySound(), t));
+    SOUNDS[k]?.rec ? Promise.resolve(loadPack(k)).then(go) : go(); };
+  $$('[data-snd]').forEach(b => b.onclick = () => { set('sound', b.dataset.snd); $$('[data-snd]').forEach(x => x.classList.toggle('active', x === b)); demoKeys(); });
+  let volT; $('#vol').oninput = e => { set('soundVol', +e.target.value); $('#volv').textContent = Math.round(e.target.value * 100) + '%'; clearTimeout(volT); volT = setTimeout(() => keySound(), 60); };
+  $('#voltest').onclick = demoKeys;
+  $('#sfxon').onchange = e => { set('sfxOn', e.target.checked); if (e.target.checked) sfx('done'); };
   $('#errsnd').onchange = e => { set('errorSound', e.target.checked); errSound(); };
   bindSeg('radius', 'radius'); bindSeg('bgpat', 'bg'); bindSeg('uiscale', 'uiScale', true);
   $('#compact').onchange = e => set('compact', e.target.checked);

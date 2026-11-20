@@ -94,6 +94,11 @@ function load() {
   return { texts: SAMPLES.map(s => newText(s)), settings: { ...DEFAULT_SETTINGS }, activity: {}, folders: [], reminded: '' };
 }
 let DB = load();
+if (DB.settings.soundMigrated !== 2) { // old default was silent: switch on the recorded keyboard + effects once
+  if (!DB.settings.sound || DB.settings.sound === 'off') DB.settings.sound = 'studio';
+  if ((DB.settings.soundVol ?? 0.5) < 0.8) DB.settings.soundVol = 0.8;
+  DB.settings.sfxOn = true; DB.settings.soundMigrated = 2;
+}
 let saveTimer;
 function save() { clearTimeout(saveTimer); saveTimer = setTimeout(() => localStorage.setItem(STORE_KEY, JSON.stringify(DB)), 150); }
 window.addEventListener('beforeunload', () => localStorage.setItem(STORE_KEY, JSON.stringify(DB)));
@@ -1120,6 +1125,7 @@ function typingMode(ctx, full, opts = {}) {
     if (e.key === ' ' || e.key === 'Enter') {
       e.preventDefault();
       if (!typed[pos]) return;
+      keySound({ heavy: true }); // space bar: a deeper, heavier key sound
       const t = typed[pos];
       const ok = t.length === TW[pos].length && [...t].every((c, k) => chEq(c, TW[pos][k]));
       if (!ok) { mistakes++; errSound(); } // a word is only ever marked wrong when you submit it

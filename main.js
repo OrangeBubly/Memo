@@ -18,7 +18,8 @@ function createWindow() {
       preload: path.join(__dirname, 'src', 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      spellcheck: false
+      spellcheck: false,
+      autoplayPolicy: 'no-user-gesture-required'
     }
   });
 

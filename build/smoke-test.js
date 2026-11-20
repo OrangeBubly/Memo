@@ -42,6 +42,21 @@ const shot = async (win, name) => { await win.evaluate(() => { document.querySel
   check('Window title is Memo', (await win.title()) === 'Memo', await win.title());
   check('Sample texts are present', (await win.$$('.text-card')).length >= 3);
   check('Sidebar icon image loads', await win.evaluate(() => { const i = document.querySelector('.logo-img'); return i && i.complete && i.naturalWidth > 0; }));
+  // Sound: recorded keyboard packs decode and play in the real Windows app
+  await win.mouse.click(400, 300); await sleep(300);
+  const snd = await win.evaluate(async () => {
+    window.__played = 0; const st = AudioBufferSourceNode.prototype.start;
+    AudioBufferSourceNode.prototype.start = function (...a) { window.__played++; return st.apply(this, a); };
+    const out = { setting: DB.settings.sound, state: null, decoded: {} };
+    for (const k of ['clicky', 'studio', 'thock']) out.decoded[k] = ((await loadPack(k)) || []).length;
+    for (let i = 0; i < 5; i++) keySound(); sfx('done');
+    out.state = AC && AC.state; out.played = window.__played;
+    return out;
+  });
+  check('Key sounds are on by default (recorded pack)', snd.setting === 'studio', snd.setting);
+  check('Audio engine is running', snd.state === 'running', snd.state);
+  check('All 3 recorded keyboard packs decode (10 samples each)', Object.values(snd.decoded).every(n => n === 10), JSON.stringify(snd.decoded));
+  check('Key presses play recorded samples', snd.played >= 5, `${snd.played} sounds started`);
   await shot(win, '01-library');
   desktopShot('00-desktop-library');
 
