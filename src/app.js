@@ -988,13 +988,13 @@ function typingMode(ctx, full, opts = {}) {
       let n = 0;
       for (let k = 0; k < target.length; k++) {
         const c = target[k];
-        if (!isTypable(c)) { h += `<span class="l auto ${errDone || t.length >= n ? 'ok' : 'u'}">${esc(c)}</span>`; continue; }
-        if (errDone) h += `<span class="l ${n < t.length && chEq(t[n], c) ? 'ok' : 'bad'}">${esc(c)}</span>`;       // reveal the right word in red
-        else if (n < t.length) h += `<span class="l ${chEq(t[n], c) ? 'ok' : 'bad'}">${esc(chEq(t[n], c) ? c : t[n])}</span>`; // wrong letter shows what was typed
+        if (!isTypable(c)) { h += `<span class="l auto ${errDone ? 'bad' : t.length >= n ? 'ok' : 'u'}">${esc(c)}</span>`; continue; }
+        if (errDone) h += `<span class="l bad">${esc(c)}</span>`;       // wrong word: the whole correct word shows in red
+        else if (n < t.length) h += `<span class="l ok">${esc(chEq(t[n], c) ? c : t[n])}</span>`; // neutral: it's a test, no per-letter hints
         else h += `<span class="l u${k ? '' : ' f0'}">${esc(c)}</span>`;
         n++;
       }
-      if (!errDone) for (let k = TW[i].length; k < t.length; k++) h += `<span class="l extra">${esc(t[k])}</span>`;
+      if (!errDone) for (let k = TW[i].length; k < t.length; k++) h += `<span class="l ok">${esc(t[k])}</span>`;
     }
     const el = wordEl[i];
     el.title = done && res[i] === 'err' && t ? `you typed “${t}”` : '';
@@ -1035,9 +1035,14 @@ function typingMode(ctx, full, opts = {}) {
 
   const fmtT = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   const wpmNow = () => { const mins = (Date.now() - startT) / 60000; return startT && mins > 0.02 ? Math.round(res.filter(r => r === 'ok').length / mins) : 0; };
+  function accNow() {
+    if (!full) return keys ? Math.round(goodKeys / keys * 100) : 100;
+    const sub = res.filter(r => r).length;
+    return sub ? Math.round(res.filter(r => r === 'ok').length / sub * 100) : 100;
+  }
   function updateStats() {
     $('#twpm').textContent = wpmNow();
-    $('#tacc').textContent = (keys ? Math.round(goodKeys / keys * 100) : 100) + '%';
+    $('#tacc').textContent = accNow() + '%';
     $('#tprog').textContent = `${pos}/${ws.length}`;
     $('#tbar').style.width = (pos / ws.length * 100) + '%';
   }
@@ -1063,7 +1068,7 @@ function typingMode(ctx, full, opts = {}) {
     const secs = Math.max(1, (Date.now() - (startT || Date.now())) / 1000);
     const ok = res.filter(r => r === 'ok').length;
     const wpm = Math.round(ok / (secs / 60));
-    const acc = keys ? Math.round(goodKeys / keys * 100) : 100;
+    const acc = accNow();
     timeline.push(wpm);
     // Results: show the whole text with mistakes highlighted.
     typer.classList.add('ended'); inner.style.transform = 'none'; inner.dataset.off = 0;
