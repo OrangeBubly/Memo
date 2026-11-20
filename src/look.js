@@ -38,7 +38,9 @@ const LOOK_DEFAULTS = {
   theme: 'system', accent: '', uiFont: 'segoe', readFont: 'serif', typeFont: 'consolas',
   caretStyle: 'line', caretBlink: 'idle', caretSpeed: 'smooth', caretWidth: 3, caretColor: 'accent', caretCustom: '#ff3366',
   typeWidth: 'normal', typeLines: 4, liveStats: true, combo: true, confetti: true, sound: 'studio', soundVol: 0.8, errorSound: true, sfxOn: true,
-  radius: 'normal', uiScale: 1, bg: 'plain', compact: false, reduceMotion: false
+  radius: 'normal', uiScale: 1, bg: 'plain', compact: false, reduceMotion: false,
+  // typing-test layout
+  tyAlign: 'left', tyVAlign: 'top', tyTyped: 'scroll', tyFlow: 'lines', tySize: 24, tyFocus: false
 };
 function S() { return DB.settings; }
 
@@ -69,6 +71,7 @@ function applyLook() {
   st.setProperty('--rs', { sharp: 0.2, normal: 1, round: 1.7 }[s.radius] ?? 1);
   st.setProperty('--ty-max', { narrow: '680px', normal: '900px', wide: '1200px', full: '100%' }[s.typeWidth] || '900px');
   st.setProperty('--ty-lines', s.typeLines || 4);
+  st.setProperty('--ty-px', (s.tySize || 24) + 'px');
   st.setProperty('--caret-w', (s.caretWidth || 3) + 'px');
   st.setProperty('--caret-t', { instant: '0s', smooth: '.1s', floaty: '.22s' }[s.caretSpeed] || '.1s');
   st.setProperty('--caret-color', s.caretColor === 'text' ? 'var(--text)' : s.caretColor === 'custom' ? s.caretCustom : 'var(--accent)');
@@ -78,6 +81,19 @@ function applyLook() {
   b.toggle('no-live', !s.liveStats);
   ['plain', 'gradient', 'dots', 'grid', 'waves'].forEach(x => b.toggle('bg-' + x, s.bg === x));
   if (window.native?.setZoom) window.native.setZoom(s.uiScale || 1);
+}
+
+// Classes for the typing-test text block, from the layout settings.
+function tyLayoutClasses(opts = {}) {
+  const s = S();
+  return [s.tyAlign === 'center' ? 'al-center' : '', s.tyFlow === 'flow' ? 'flow' : '', !opts.drill && s.tyTyped === 'keep' ? 'keep' : ''].join(' ');
+}
+// Optional focus mode: fade everything but the text while typing; moving the mouse brings it back.
+function tyFocusOn() {
+  if (!S().tyFocus || document.body.classList.contains('ty-faded')) return;
+  document.body.classList.add('ty-faded');
+  const off = () => document.body.classList.remove('ty-faded');
+  window.addEventListener('mousemove', off, { once: true });
 }
 
 // Classes applied to a typing caret element.
@@ -150,9 +166,14 @@ function playSample(key, { heavy = false } = {}) {
   packLast[key] = i;
   const src = a.createBufferSource(), g = a.createGain();
   src.buffer = bufs[i];
-  src.playbackRate.value = (heavy ? 0.9 : 1) * (0.96 + Math.random() * 0.08); // small natural variation
-  g.gain.value = 1.6 * vol() * (heavy ? 1.15 : 0.92 + Math.random() * 0.16);
-  src.connect(g).connect(MASTER); src.start();
+  // Natural variation so repeated keys never sound identical: pitch, loudness and tone all wobble a little,
+  // and roughly one key in eight lands a bit harder, like a real typist.
+  const accent = !heavy && Math.random() < 0.12;
+  src.playbackRate.value = (heavy ? 0.9 : 1) * (0.95 + Math.random() * 0.1);
+  g.gain.value = 1.6 * vol() * (heavy ? 1.15 : accent ? 1.12 : 0.74 + Math.random() * 0.32);
+  const tone = a.createBiquadFilter(); tone.type = 'lowpass';
+  tone.frequency.value = heavy ? 9000 : 7000 + Math.random() * 11000;   // some keys a touch duller, some brighter
+  src.connect(tone).connect(g).connect(MASTER); src.start();
 }
 
 const SOUNDS = {
@@ -401,123 +422,181 @@ function viewProfile(main) {
   animateRings(main);
 }
 
-// ---------- Customize view ----------
+// ---------- Customize view (tabbed) ----------
+const CZ_TABS = [['look', '🎨', 'Look'], ['text', '🔤', 'Text'], ['typing', '⌨️', 'Typing test'], ['cursor', '▍', 'Cursor'], ['sound', '🔊', 'Sound']];
+function czTab() { try { return localStorage.getItem('memo-cz-tab') || 'look'; } catch { return 'look'; } }
+function setCzTab(t) { try { localStorage.setItem('memo-cz-tab', t); } catch { } }
+
 function viewCustomize(main) {
-  const s = S(), L = level();
+  const s = S(), L = level(), tab = CZ_TABS.some(t => t[0] === czTab()) ? czTab() : 'look';
   const seg = (id, opts, cur) => `<div class="seg" id="${id}">${opts.map(([v, l, lock]) => `<button data-v="${v}" class="${String(cur) === String(v) ? 'on' : ''}" ${lock ? 'disabled title="Unlocks at level ' + lock + '"' : ''}>${lock ? '🔒 ' : ''}${l}</button>`).join('')}</div>`;
   const tog = (id, on) => `<label class="switch"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}><span></span></label>`;
+  const row = (label, ctl, desc = '') => `<div class="cz-row"><div class="cz-l"><b>${label}</b>${desc ? `<div class="desc">${desc}</div>` : ''}</div><div class="cz-c">${ctl}</div></div>`;
   const swatch = (k, t) => { const locked = t.unlock && L < t.unlock.level;
     return `<button class="theme-sw ${s.theme === k ? 'on' : ''}" data-theme="${k}" ${locked ? 'disabled' : ''} style="--sw-bg:${t.bg};--sw-panel:${t.panel};--sw-text:${t.text};--sw-acc:${t.accent};--sw-border:${t.border}">
       <div class="sw-prev"><div class="sw-side"></div><div class="sw-body"><div class="sw-line" style="width:70%"></div><div class="sw-line" style="width:45%"></div><div class="sw-dot"></div></div></div>
       <div class="sw-name">${locked ? '🔒 ' : ''}${t.name}${locked ? ` <small>Lv ${t.unlock.level}</small>` : ''}</div></button>`; };
-  main.innerHTML = `<div class="row"><div><h1>Customize</h1><div class="sub">Make Memo yours. Everything applies instantly.</div></div><span class="spacer"></span>
-      <button class="btn" id="resetlook">↺ Reset to defaults</button></div>
-    <h2>Theme</h2>
-    <div class="theme-grid">
-      <button class="theme-sw ${s.theme === 'system' ? 'on' : ''}" data-theme="system" style="--sw-bg:linear-gradient(135deg,#f7f5f0 50%,#16181c 50%);--sw-panel:transparent;--sw-text:#888;--sw-acc:#e8730c;--sw-border:#888">
-        <div class="sw-prev" style="background:var(--sw-bg)"><div class="sw-body"><div class="sw-dot"></div></div></div><div class="sw-name">Match Windows</div></button>
-      ${Object.entries(THEMES).map(([k, t]) => swatch(k, t)).join('')}
-    </div>
-    <h2>Accent color</h2>
-    <div class="card"><div class="row accent-row">
-      <button class="acc-dot theme-acc ${!s.accent ? 'on' : ''}" data-acc="" title="Theme default">✦</button>
-      ${ACCENTS.map(c => `<button class="acc-dot ${s.accent === c ? 'on' : ''}" data-acc="${c}" style="background:${c}"></button>`).join('')}
-      <label class="acc-dot custom ${s.accent && !ACCENTS.includes(s.accent) ? 'on' : ''}" title="Custom color">🎨<input type="color" id="acccustom" value="${s.accent || '#e8730c'}"></label>
-    </div></div>
 
-    <h2>Typing cursor</h2>
-    <div class="card cz">
-      <div class="caret-grid">${Object.entries(CARETS).map(([k, n]) => `<button class="caret-card ${s.caretStyle === k ? 'on' : ''}" data-caret="${k}">
-        <div class="cc-prev"><span>m</span><span class="cc-cur">e</span><span>mo</span><i class="caret c-${k} cc-car"></i></div><div>${n}</div></button>`).join('')}</div>
-      <div class="cz-row"><div><b>Blinking</b><div class="desc">Block + "always" = classic command prompt</div></div>${seg('cblink', [['idle', 'When idle'], ['always', 'Always'], ['off', 'Never']], s.caretBlink)}</div>
-      <div class="cz-row"><div><b>Movement</b><div class="desc">How the cursor glides between letters</div></div>${seg('cspeed', [['instant', 'Instant'], ['smooth', 'Smooth'], ['floaty', 'Floaty']], s.caretSpeed)}</div>
-      <div class="cz-row"><div><b>Line thickness</b></div>${seg('cwidth', [[2, 'Thin'], [3, 'Normal'], [5, 'Thick']], s.caretWidth)}</div>
-      <div class="cz-row"><div><b>Color</b></div><div class="row">${seg('ccolor', [['accent', 'Accent'], ['text', 'Text'], ['rainbow', 'Rainbow', L < CARET_RAINBOW_LEVEL ? CARET_RAINBOW_LEVEL : 0], ['custom', 'Custom']], s.caretColor)}
-        <input type="color" id="ccustom" value="${s.caretCustom}" ${s.caretColor === 'custom' ? '' : 'class="hidden"'}></div></div>
-      <div class="cz-preview"><div class="sub" style="margin:0 0 6px">Live preview</div><div class="typer demo" id="demo" data-vis="faint"><div class="ty-inner" id="demoin"></div></div></div>
-    </div>
+  const P = {
+    look: `
+      <div class="theme-grid">
+        <button class="theme-sw ${s.theme === 'system' ? 'on' : ''}" data-theme="system" style="--sw-bg:linear-gradient(135deg,#f7f5f0 50%,#16181c 50%);--sw-panel:transparent;--sw-text:#888;--sw-acc:#e8730c;--sw-border:#888">
+          <div class="sw-prev" style="background:var(--sw-bg)"><div class="sw-body"><div class="sw-dot"></div></div></div><div class="sw-name">Match Windows</div></button>
+        ${Object.entries(THEMES).map(([k, t]) => swatch(k, t)).join('')}
+      </div>
+      <div class="card cz">
+        ${row('Accent', `<div class="row accent-row">
+          <button class="acc-dot theme-acc ${!s.accent ? 'on' : ''}" data-acc="" title="Theme default">✦</button>
+          ${ACCENTS.map(c => `<button class="acc-dot ${s.accent === c ? 'on' : ''}" data-acc="${c}" style="background:${c}"></button>`).join('')}
+          <label class="acc-dot custom ${s.accent && !ACCENTS.includes(s.accent) ? 'on' : ''}" title="Custom color">🎨<input type="color" id="acccustom" value="${s.accent || '#e8730c'}"></label></div>`)}
+        ${row('Background', seg('bgpat', [['plain', 'Plain'], ['gradient', 'Glow'], ['dots', 'Dots'], ['grid', 'Grid'], ['waves', 'Waves']], s.bg))}
+        ${row('Corners', seg('radius', [['sharp', 'Sharp'], ['normal', 'Rounded'], ['round', 'Round']], s.radius))}
+        ${row('Interface size', seg('uiscale', [[0.9, 'S'], [1, 'M'], [1.1, 'L'], [1.25, 'XL']], s.uiScale))}
+        ${row('Compact sidebar', tog('compact', s.compact), 'Icons only')}
+        ${row('Reduce motion', tog('reducem', s.reduceMotion), 'Turn off animations')}
+      </div>`,
+    text: `
+      <div class="card cz">
+        ${row('Reading font', `<div class="font-row">${Object.entries(FONTS.read).map(([k, [n, f]]) => `<button class="font-card ${s.readFont === k ? 'on' : ''}" data-rf="${k}" style="font-family:${f}"><span>Aa</span>${n}</button>`).join('')}</div>`, 'Used in Familiarize and Practice modes')}
+        ${row('Reading size', `<div class="row"><input type="range" id="fs" min="14" max="44" value="${s.fontSize}"><span class="rv" id="fsv">${s.fontSize}px</span></div>`)}
+        ${row('Interface font', seg('uifont', Object.entries(FONTS.ui).map(([k, [n]]) => [k, n]), s.uiFont))}
+      </div>
+      <div class="card reading cz-sample">Shall I compare thee to a summer's day?<br>Thou art more lovely and more temperate.</div>`,
+    typing: `
+      <div class="cz-split">
+        <div class="card cz">
+          <div class="cz-h">Layout</div>
+          ${row('Text position', seg('tyalign', [['left', '⇤ Left'], ['center', '↔ Center']], s.tyAlign))}
+          ${row('On screen', seg('tyvalign', [['top', 'Top'], ['middle', 'Middle']], s.tyVAlign))}
+          ${row('Typed text', seg('tytyped', [['scroll', 'Scrolls away'], ['keep', 'Stays visible']], s.tyTyped), s.tyTyped === 'keep' ? 'Everything you type stays on screen; the page follows the cursor' : 'Only the line before the cursor stays; older lines slide up')}
+          ${row('Line breaks', seg('tyflow', [['lines', 'As written'], ['flow', 'Flowing']], s.tyFlow), 'Keep the poem\'s lines, or run text together like a paragraph')}
+          ${row('Width', seg('tywidth', [['narrow', 'Narrow'], ['normal', 'Normal'], ['wide', 'Wide'], ['full', 'Full']], s.typeWidth))}
+          ${s.tyTyped === 'keep' ? '' : row('Visible lines', seg('tylines', [[3, '3'], [4, '4'], [5, '5'], [6, '6']], s.typeLines))}
+          <div class="cz-h">Text</div>
+          ${row('Size', `<div class="row"><input type="range" id="tysize" min="16" max="48" value="${s.tySize || 24}"><span class="rv" id="tysizev">${s.tySize || 24}px</span></div>`)}
+          ${row('Font', `<div class="font-row">${Object.entries(FONTS.type).map(([k, [n, f]]) => `<button class="font-card sm ${s.typeFont === k ? 'on' : ''}" data-tf="${k}" style="font-family:${f.replace('var(--read-font)', 'inherit')}"><span>Aa</span>${n}</button>`).join('')}</div>`)}
+          <div class="cz-h">While typing</div>
+          ${row('Focus mode', tog('tyfocus', s.tyFocus), 'Fade everything except the text; move the mouse to bring it back')}
+          ${row('Live stats', tog('livestats', s.liveStats), 'WPM, accuracy and timer')}
+          ${row('Combo counter', tog('combo', s.combo))}
+          ${row('Confetti', tog('confetti', s.confetti), 'On great scores and level-ups')}
+        </div>
+        <div class="cz-prevcol"><div class="cz-h">Preview</div><div class="ty-mock ${s.tyVAlign === 'middle' ? 'vmid' : ''}" id="tymock"></div>
+          <div class="desc" style="margin-top:8px">A miniature test screen with your layout. Dark = typed, faint = still to type.</div></div>
+      </div>`,
+    cursor: `
+      <div class="card cz">
+        <div class="caret-grid">${Object.entries(CARETS).map(([k, n]) => `<button class="caret-card ${s.caretStyle === k ? 'on' : ''}" data-caret="${k}">
+          <div class="cc-prev"><span>m</span><span class="cc-cur">e</span><span>mo</span><i class="caret c-${k} cc-car"></i></div><div>${n}</div></button>`).join('')}</div>
+        ${row('Blinking', seg('cblink', [['idle', 'When idle'], ['always', 'Always'], ['off', 'Never']], s.caretBlink), 'Block + Always = command prompt look')}
+        ${row('Movement', seg('cspeed', [['instant', 'Instant'], ['smooth', 'Smooth'], ['floaty', 'Floaty']], s.caretSpeed))}
+        ${s.caretStyle === 'line' ? row('Thickness', seg('cwidth', [[2, 'Thin'], [3, 'Normal'], [5, 'Thick']], s.caretWidth)) : ''}
+        ${row('Color', `<div class="row">${seg('ccolor', [['accent', 'Accent'], ['text', 'Text'], ['rainbow', 'Rainbow', L < CARET_RAINBOW_LEVEL ? CARET_RAINBOW_LEVEL : 0], ['custom', 'Custom']], s.caretColor)}
+          <input type="color" id="ccustom" value="${s.caretCustom}" ${s.caretColor === 'custom' ? '' : 'class="hidden"'}></div>`)}
+        <div class="typer demo" id="demo" data-vis="faint"><div class="ty-inner" id="demoin"></div></div>
+      </div>`,
+    sound: `
+      <div class="card cz">
+        ${row('Key sound', `<div class="sound-col">
+          <div class="sound-row"><button class="chip ${s.sound === 'off' ? 'active' : ''}" data-snd="off">Off</button><span class="sound-lbl">🎙️ Recorded</span>${['clicky', 'studio', 'thock'].map(k => `<button class="chip ${s.sound === k ? 'active' : ''}" data-snd="${k}">${SOUNDS[k].name}</button>`).join('')}</div>
+          <div class="sound-row"><span class="sound-lbl">🎛️ Synth</span>${Object.entries(SOUNDS).filter(([k, so]) => !so.rec && k !== 'off').map(([k, so]) => { const lock = so.unlock && L < so.unlock.level;
+            return `<button class="chip ${s.sound === k ? 'active' : ''}" data-snd="${k}" ${lock ? `disabled title="Unlocks at level ${so.unlock.level}"` : ''}>${lock ? '🔒 ' : ''}${so.name}</button>`; }).join('')}</div></div>`, 'Click one to hear it')}
+        ${row('Volume', `<div class="row vol-row"><input type="range" id="vol" min="0" max="1" step="0.05" value="${s.soundVol}"><span class="rv" id="volv">${Math.round(s.soundVol * 100)}%</span><button class="btn small" id="voltest">▶ Test</button></div>`)}
+        ${row('Sound effects', tog('sfxon', s.sfxOn !== false), 'Finish chime, achievements, level-ups')}
+        ${row('Mistake sound', tog('errsnd', s.errorSound), 'When a word is submitted wrong')}
+      </div>`
+  };
 
-    <h2>Fonts</h2>
-    <div class="card cz">
-      <div class="cz-row"><div><b>Reading text</b></div><div class="font-row">${Object.entries(FONTS.read).map(([k, [n, f]]) => `<button class="font-card ${s.readFont === k ? 'on' : ''}" data-rf="${k}" style="font-family:${f}"><span>Aa</span>${n}</button>`).join('')}</div></div>
-      <div class="cz-row"><div><b>Typing tests</b></div><div class="font-row">${Object.entries(FONTS.type).map(([k, [n, f]]) => `<button class="font-card ${s.typeFont === k ? 'on' : ''}" data-tf="${k}" style="font-family:${f.replace('var(--read-font)', 'inherit')}"><span>Aa</span>${n}</button>`).join('')}</div></div>
-      <div class="cz-row"><div><b>Interface</b></div>${seg('uifont', Object.entries(FONTS.ui).map(([k, [n]]) => [k, n]), s.uiFont)}</div>
-      <div class="cz-row"><div><b>Text size</b></div><div class="row"><input type="range" id="fs" min="14" max="44" value="${s.fontSize}"><span id="fsv">${s.fontSize}px</span></div></div>
-    </div>
+  main.innerHTML = `<div class="row cz-top"><h1 style="margin:0">Customize</h1><span class="spacer"></span>
+      <button class="btn small" id="resetlook">↺ Reset all</button></div>
+    <div class="cz-tabs" role="tablist">${CZ_TABS.map(([k, ic, n]) => `<button role="tab" class="cz-tab ${k === tab ? 'on' : ''}" data-tab="${k}"><span>${ic}</span>${n}</button>`).join('')}</div>
+    <div class="cz-panel">${P[tab]}</div>`;
 
-    <h2>Typing tests</h2>
-    <div class="card cz">
-      <div class="cz-row"><div><b>Text width</b></div>${seg('tywidth', [['narrow', 'Narrow'], ['normal', 'Normal'], ['wide', 'Wide'], ['full', 'Full']], s.typeWidth)}</div>
-      <div class="cz-row"><div><b>Visible lines</b></div>${seg('tylines', [[3, '3'], [4, '4'], [5, '5'], [6, '6']], s.typeLines)}</div>
-      <div class="cz-row"><div><b>Live stats</b><div class="desc">WPM, accuracy and timer while typing</div></div>${tog('livestats', s.liveStats)}</div>
-      <div class="cz-row"><div><b>Combo counter</b><div class="desc">Count words in a row without mistakes</div></div>${tog('combo', s.combo)}</div>
-      <div class="cz-row"><div><b>Confetti</b><div class="desc">Celebrate great scores and level-ups</div></div>${tog('confetti', s.confetti)}</div>
-      <div class="cz-row"><div><b>Key sounds</b><div class="desc">Recorded keyboards, or synthesized sounds. Click one to hear it.</div></div><div class="sound-col">
-        <div class="sound-row"><button class="chip ${s.sound === 'off' ? 'active' : ''}" data-snd="off">Off</button><span class="sound-lbl">🎙️ Recorded</span>${['clicky', 'studio', 'thock'].map(k => `<button class="chip ${s.sound === k ? 'active' : ''}" data-snd="${k}">${SOUNDS[k].name}</button>`).join('')}</div>
-        <div class="sound-row"><span class="sound-lbl">🎛️ Synth</span>${Object.entries(SOUNDS).filter(([k, so]) => !so.rec && k !== 'off').map(([k, so]) => { const lock = so.unlock && L < so.unlock.level;
-          return `<button class="chip ${s.sound === k ? 'active' : ''}" data-snd="${k}" ${lock ? `disabled title="Unlocks at level ${so.unlock.level}"` : ''}>${lock ? '🔒 ' : ''}${so.name}</button>`; }).join('')}</div></div></div>
-      <div class="cz-row"><div><b>Volume</b></div><div class="row vol-row"><input type="range" id="vol" min="0" max="1" step="0.05" value="${s.soundVol}"><span id="volv">${Math.round(s.soundVol * 100)}%</span><button class="btn small" id="voltest">▶ Test</button></div></div>
-      <div class="cz-row"><div><b>Sound effects</b><div class="desc">Finish chime, achievements and level-ups</div></div>${tog('sfxon', s.sfxOn !== false)}</div>
-      <div class="cz-row"><div><b>Mistake sound</b><div class="desc">Plays when a word is submitted wrong</div></div>${tog('errsnd', s.errorSound)}</div>
-    </div>
+  const rerender = () => { const y = $('#main').scrollTop; go('customize'); $('#main').scrollTop = y; };
+  const set = (k, v, re = false) => { s[k] = v; save(); applyLook(); updateSidebar(); if (re) rerender(); else drawMock(); };
+  const bindSeg = (id, key, num = false, re = true) => $$(`#${id} button`).forEach(b => b.onclick = () => set(key, num ? +b.dataset.v : b.dataset.v, re));
+  const on = (sel, ev, fn) => { const el = $(sel); if (el) el[ev] = fn; };
+  $$('.cz-tab').forEach(b => b.onclick = () => { setCzTab(b.dataset.tab); go('customize'); });
+  on('#resetlook', 'onclick', async () => { if (!await confirmBox('Reset all customization to defaults?', 'Reset')) return; Object.assign(s, LOOK_DEFAULTS); save(); applyLook(); go('customize'); });
 
-    <h2>Interface</h2>
-    <div class="card cz">
-      <div class="cz-row"><div><b>Corners</b></div>${seg('radius', [['sharp', 'Sharp'], ['normal', 'Rounded'], ['round', 'Extra round']], s.radius)}</div>
-      <div class="cz-row"><div><b>Background</b></div>${seg('bgpat', [['plain', 'Plain'], ['gradient', 'Glow'], ['dots', 'Dots'], ['grid', 'Grid'], ['waves', 'Waves']], s.bg)}</div>
-      <div class="cz-row"><div><b>Interface size</b></div>${seg('uiscale', [[0.9, 'Small'], [1, 'Normal'], [1.1, 'Large'], [1.25, 'Huge']], s.uiScale)}</div>
-      <div class="cz-row"><div><b>Compact sidebar</b><div class="desc">Icons only</div></div>${tog('compact', s.compact)}</div>
-      <div class="cz-row"><div><b>Reduce motion</b><div class="desc">Turn off animations</div></div>${tog('reducem', s.reduceMotion)}</div>
-    </div>`;
-
-  const set = (k, v, rerender = false) => { s[k] = v; save(); applyLook(); updateSidebar(); if (rerender) { const y = $('#main').scrollTop; go('customize'); $('#main').scrollTop = y; } };
-  const bindSeg = (id, key, num = false, rerender = true) => $$(`#${id} button`).forEach(b => b.onclick = () => set(key, num ? +b.dataset.v : b.dataset.v, rerender));
+  // Look
   $$('.theme-sw').forEach(b => b.onclick = () => set('theme', b.dataset.theme, true));
   $$('[data-acc]').forEach(b => b.onclick = () => set('accent', b.dataset.acc, true));
-  $('#acccustom').oninput = e => set('accent', e.target.value);
-  $('#acccustom').onchange = () => set('accent', s.accent, true);
+  on('#acccustom', 'oninput', e => set('accent', e.target.value));
+  on('#acccustom', 'onchange', () => set('accent', s.accent, true));
+  bindSeg('bgpat', 'bg'); bindSeg('radius', 'radius'); bindSeg('uiscale', 'uiScale', true);
+  on('#compact', 'onchange', e => set('compact', e.target.checked));
+  on('#reducem', 'onchange', e => set('reduceMotion', e.target.checked));
+  // Text
+  $$('[data-rf]').forEach(b => b.onclick = () => set('readFont', b.dataset.rf, true));
+  on('#fs', 'oninput', e => { set('fontSize', +e.target.value); $('#fsv').textContent = e.target.value + 'px'; });
+  bindSeg('uifont', 'uiFont');
+  // Typing test
+  bindSeg('tyalign', 'tyAlign'); bindSeg('tyvalign', 'tyVAlign'); bindSeg('tytyped', 'tyTyped'); bindSeg('tyflow', 'tyFlow');
+  bindSeg('tywidth', 'typeWidth'); bindSeg('tylines', 'typeLines', true);
+  on('#tysize', 'oninput', e => { set('tySize', +e.target.value); $('#tysizev').textContent = e.target.value + 'px'; });
+  $$('[data-tf]').forEach(b => b.onclick = () => set('typeFont', b.dataset.tf, true));
+  on('#tyfocus', 'onchange', e => set('tyFocus', e.target.checked));
+  on('#livestats', 'onchange', e => set('liveStats', e.target.checked));
+  on('#combo', 'onchange', e => set('combo', e.target.checked));
+  on('#confetti', 'onchange', e => { set('confetti', e.target.checked); if (e.target.checked) confetti(0.6); });
+  // Cursor
   $$('[data-caret]').forEach(b => b.onclick = () => set('caretStyle', b.dataset.caret, true));
   bindSeg('cblink', 'caretBlink'); bindSeg('cspeed', 'caretSpeed'); bindSeg('cwidth', 'caretWidth', true); bindSeg('ccolor', 'caretColor');
-  $('#ccustom').oninput = e => set('caretCustom', e.target.value);
-  $$('[data-rf]').forEach(b => b.onclick = () => set('readFont', b.dataset.rf, true));
-  $$('[data-tf]').forEach(b => b.onclick = () => set('typeFont', b.dataset.tf, true));
-  bindSeg('uifont', 'uiFont');
-  $('#fs').oninput = e => { set('fontSize', +e.target.value); $('#fsv').textContent = e.target.value + 'px'; };
-  bindSeg('tywidth', 'typeWidth'); bindSeg('tylines', 'typeLines', true);
-  $('#livestats').onchange = e => set('liveStats', e.target.checked);
-  $('#combo').onchange = e => set('combo', e.target.checked);
-  $('#confetti').onchange = e => { set('confetti', e.target.checked); if (e.target.checked) confetti(0.6); };
-  const demoKeys = () => { audio(); warmSounds(); const k = S().sound; const go = () => [0, 90, 170, 260, 330].forEach(t => setTimeout(() => keySound(), t));
-    SOUNDS[k]?.rec ? Promise.resolve(loadPack(k)).then(go) : go(); };
+  on('#ccustom', 'oninput', e => set('caretCustom', e.target.value));
+  // Sound
+  const demoKeys = () => { audio(); warmSounds(); const k = S().sound; const play = () => [0, 90, 170, 260, 330, 420, 480].forEach((t, i, arr) => setTimeout(() => keySound(i === arr.length - 1 ? { heavy: true } : undefined), t));
+    SOUNDS[k]?.rec ? Promise.resolve(loadPack(k)).then(play) : play(); };
   $$('[data-snd]').forEach(b => b.onclick = () => { set('sound', b.dataset.snd); $$('[data-snd]').forEach(x => x.classList.toggle('active', x === b)); demoKeys(); });
-  let volT; $('#vol').oninput = e => { set('soundVol', +e.target.value); $('#volv').textContent = Math.round(e.target.value * 100) + '%'; clearTimeout(volT); volT = setTimeout(() => keySound(), 60); };
-  $('#voltest').onclick = demoKeys;
-  $('#sfxon').onchange = e => { set('sfxOn', e.target.checked); if (e.target.checked) sfx('done'); };
-  $('#errsnd').onchange = e => { set('errorSound', e.target.checked); errSound(); };
-  bindSeg('radius', 'radius'); bindSeg('bgpat', 'bg'); bindSeg('uiscale', 'uiScale', true);
-  $('#compact').onchange = e => set('compact', e.target.checked);
-  $('#reducem').onchange = e => set('reduceMotion', e.target.checked);
-  $('#resetlook').onclick = async () => { if (!await confirmBox('Reset all customization to defaults?', 'Reset')) return; Object.assign(s, LOOK_DEFAULTS); save(); applyLook(); go('customize'); };
+  let volT; on('#vol', 'oninput', e => { set('soundVol', +e.target.value); $('#volv').textContent = Math.round(e.target.value * 100) + '%'; clearTimeout(volT); volT = setTimeout(() => keySound(), 60); });
+  on('#voltest', 'onclick', demoKeys);
+  on('#sfxon', 'onchange', e => { set('sfxOn', e.target.checked); if (e.target.checked) sfx('done'); });
+  on('#errsnd', 'onchange', e => { set('errorSound', e.target.checked); errSound(); });
 
-  // Live animated caret demo using the real caret settings.
-  const demoText = 'Shall I compare thee to a summer day';
+  // Typing-test layout preview: a miniature test screen using the real layout classes.
+  function drawMock() {
+    const m = $('#tymock'); if (!m) return;
+    const st = S();
+    m.className = 'ty-mock' + (st.tyVAlign === 'middle' ? ' vmid' : '');
+    const lines = ["Shall I compare thee to a summer's day?", 'Thou art more lovely and more temperate:', 'Rough winds do shake the darling buds of May,', "And summer's lease hath all too short a date;"];
+    const typedLines = 2, typedWords = 3; // cursor sits inside line 3
+    const keep = st.tyTyped === 'keep';
+    const shown = keep ? lines : lines.slice(typedLines - 1);
+    const html = shown.map((ln, i) => {
+      const li = keep ? i : i + typedLines - 1;
+      const words = ln.split(' ');
+      return `<div class="mk-line">${words.map((w, wi) => {
+        const done = li < typedLines || (li === typedLines && wi < typedWords);
+        const cur = li === typedLines && wi === typedWords;
+        return `${cur ? '<i class="mk-caret"></i>' : ''}<span class="${done ? 'mk-t' : 'mk-u'}">${esc(w)}</span>`;
+      }).join(' ')}</div>`;
+    }).join('');
+    m.innerHTML = `<div class="mk-bar"><span></span><span></span><span></span></div>
+      ${st.liveStats ? '<div class="mk-stats">72 wpm · 98% · 0:41</div>' : ''}
+      <div class="mk-text ${tyLayoutClasses()} ${st.tyFlow === 'flow' ? 'flow' : ''}" style="max-width:${{ narrow: '62%', normal: '80%', wide: '94%', full: '100%' }[st.typeWidth] || '80%'};font-size:${Math.round((st.tySize || 24) / 2.6)}px;font-family:var(--type-font)">${html}</div>`;
+  }
+  drawMock();
+
+  // Cursor tab: live animated caret demo + style-card previews
   const demoIn = $('#demoin');
-  demoIn.innerHTML = `<div class="ty-line">${demoText.split('').map(c => c === ' ' ? '<span class="ts on"> </span>' : `<span class="l u">${c}</span>`).join('')}</div><div class="${caretClasses()}" id="democ"></div>`;
-  const letters = $$('#demoin > .ty-line > span'), dc = $('#democ');
-  let i = 0, pause = 0;
-  const step = () => {
-    if (pause > 0) { pause--; dc.classList.add('idle'); return; }
-    dc.classList.remove('idle');
-    if (i >= letters.length) { letters.forEach(l => l.classList.contains('l') && (l.className = 'l u')); i = 0; pause = 6; }
-    const el = letters[i]; const ir = demoIn.getBoundingClientRect(), r = el.getBoundingClientRect();
-    placeCaret(dc, r.left - ir.left, r.top - ir.top, r.width, r.height);
-    if (el.classList.contains('l')) el.className = 'l ok';
-    i++;
-  };
-  const iv = setInterval(step, 150); cleanup.push(() => clearInterval(iv));
-  // caret previews in the style cards
-  $$('.caret-card').forEach(card => { const cur = $('.cc-cur', card), car = $('.cc-car', card), pr = $('.cc-prev', card);
-    requestAnimationFrame(() => { const a = pr.getBoundingClientRect(), r = cur.getBoundingClientRect(); const st = card.dataset.caret;
-      let w = st === 'line' ? 3 : r.width, h = st === 'underline' ? 3 : r.height, y = r.top - a.top + (st === 'underline' ? r.height - 4 : 0);
-      car.style.cssText = `width:${w}px;height:${h}px;transform:translate(${r.left - a.left - (st === 'line' ? 1 : 0)}px,${y}px)`; }); });
+  if (demoIn) {
+    const demoText = 'Shall I compare thee to a summer day';
+    demoIn.innerHTML = `<div class="ty-line">${demoText.split('').map(c => c === ' ' ? '<span class="ts on"> </span>' : `<span class="l u">${c}</span>`).join('')}</div><div class="${caretClasses()}" id="democ"></div>`;
+    const letters = $$('#demoin > .ty-line > span'), dc = $('#democ');
+    let i = 0, pause = 0;
+    const step = () => {
+      if (pause > 0) { pause--; dc.classList.add('idle'); return; }
+      dc.classList.remove('idle');
+      if (i >= letters.length) { letters.forEach(l => l.classList.contains('l') && (l.className = 'l u')); i = 0; pause = 6; }
+      const el = letters[i]; const ir = demoIn.getBoundingClientRect(), r = el.getBoundingClientRect();
+      placeCaret(dc, r.left - ir.left, r.top - ir.top, r.width, r.height);
+      if (el.classList.contains('l')) el.className = 'l ok';
+      i++;
+    };
+    const iv = setInterval(step, 150); cleanup.push(() => clearInterval(iv));
+    $$('.caret-card').forEach(card => { const cur = $('.cc-cur', card), car = $('.cc-car', card), pr = $('.cc-prev', card);
+      requestAnimationFrame(() => { const a = pr.getBoundingClientRect(), r = cur.getBoundingClientRect(); const st = card.dataset.caret;
+        let w = st === 'line' ? 3 : r.width, h = st === 'underline' ? 3 : r.height, y = r.top - a.top + (st === 'underline' ? r.height - 4 : 0);
+        car.style.cssText = `width:${w}px;height:${h}px;transform:translate(${r.left - a.left - (st === 'line' ? 1 : 0)}px,${y}px)`; }); });
+  }
 }

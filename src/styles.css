@@ -436,3 +436,66 @@ input[type=color] { padding: 2px; height: 32px; width: 44px; cursor: pointer; }
 #volv { min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
 .sound-col { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
 .sound-lbl { font-size: 12px; color: var(--muted); align-self: center; margin-right: 2px; }
+
+/* ===================== Customize: tabs + compact rows ===================== */
+.cz-top { margin-bottom: 14px; }
+.cz-tabs { display: flex; gap: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: calc(12px * var(--rs, 1));
+  padding: 4px; margin-bottom: 16px; position: sticky; top: -24px; z-index: 5; box-shadow: var(--shadow); }
+.cz-tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px; border: none; background: none; color: var(--muted);
+  padding: 9px 10px; border-radius: calc(9px * var(--rs, 1)); font-weight: 600; font-size: 14px; transition: background .15s, color .15s; white-space: nowrap; }
+.cz-tab span { font-size: 16px; }
+.cz-tab:hover { background: var(--panel2); color: var(--text); }
+.cz-tab.on { background: var(--accent); color: var(--accent-ink, #fff); }
+.cz-panel { display: flex; flex-direction: column; gap: 14px; animation: czin .18s ease-out; }
+@keyframes czin { from { opacity: 0; transform: translateY(4px); } }
+.cz-panel .card.cz { gap: 0; padding: 4px 16px; }
+.cz-panel .cz-row { padding: 11px 0; border-bottom: 1px solid var(--border); gap: 20px; flex-wrap: nowrap; }
+.cz-panel .cz-row:last-child { border-bottom: none; }
+.cz-l { min-width: 150px; flex-shrink: 0; }
+.cz-l b { font-size: 14px; }
+.cz-l .desc { max-width: 260px; margin-top: 2px; line-height: 1.35; }
+.cz-c { display: flex; justify-content: flex-end; flex-wrap: wrap; min-width: 0; }
+.cz-h { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 14px 0 2px; }
+.cz-h:first-child { padding-top: 10px; }
+.rv { min-width: 44px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.theme-grid { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; }
+.sw-prev { height: 52px; }
+.font-card.sm { min-width: 0; padding: 5px 9px; }
+.font-card.sm span { font-size: 18px; }
+.cz-sample { padding: 18px 22px; }
+.cz-panel .typer.demo { margin: 12px 0 14px; }
+.cz-panel .caret-grid { margin: 12px 0 4px; }
+
+/* Typing tab: settings left, live preview right */
+.cz-split { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(260px, 1fr); gap: 16px; align-items: start; }
+.cz-prevcol { position: sticky; top: 40px; }
+@media (max-width: 1100px) { .cz-split { grid-template-columns: 1fr; } .cz-prevcol { position: static; order: -1; } }
+.ty-mock { aspect-ratio: 16 / 10; background: var(--bg); border: 1px solid var(--border); border-radius: calc(12px * var(--rs, 1)); box-shadow: var(--shadow);
+  padding: 10px 14px 14px; display: flex; flex-direction: column; overflow: hidden; }
+.ty-mock.vmid .mk-text { margin-top: auto; margin-bottom: auto; }
+.mk-bar { display: flex; gap: 4px; margin-bottom: 8px; }
+.mk-bar span { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+.mk-stats { font-family: var(--type-font); font-size: 10px; color: var(--accent); font-weight: 700; margin-bottom: 8px; }
+.mk-text { line-height: 1.7; width: 100%; margin: 0 auto; transition: font-size .15s; }
+.mk-text.al-center { text-align: center; }
+.mk-text.flow .mk-line { display: inline; }
+.mk-text.flow .mk-line::after { content: ' '; }
+.mk-t { color: var(--text); }
+.mk-u { color: color-mix(in srgb, var(--muted) 45%, transparent); }
+.mk-caret { display: inline-block; width: 2px; height: 1.1em; background: var(--caret-color, var(--accent)); vertical-align: -0.2em; margin-right: 1px; animation: cblink 1s infinite; }
+
+/* ===================== Typing test layout options ===================== */
+.typer:not(.demo) { --ty-size: var(--ty-px, calc(var(--reading) * 1.08)); }
+.typer.al-center .ty-line { text-align: center; }
+.typer.flow .ty-line { display: inline; }
+.typer.flow .ty-line::after { content: ' '; white-space: pre; }
+.typer.flow .ty-gap { display: block; height: calc(var(--ty-lh) * .35); }
+.typer.keep { height: auto; -webkit-mask-image: none; overflow: visible; }
+.typer.keep .ty-inner { transform: none !important; }
+#stage.ty-vmid { min-height: calc(100vh - 150px); display: flex; flex-direction: column; justify-content: center; }
+#stage.ty-vmid > .done-box { align-self: stretch; }
+/* focus mode: fade everything but the text while typing */
+body.ty-faded .practice-head, body.ty-faded #main > .sub, body.ty-faded .ty-top, body.ty-faded .ty-help, body.ty-faded .ty-bar { opacity: .06; transition: opacity .4s; }
+.practice-head, #main > .sub, .ty-top, .ty-help, .ty-bar { transition: opacity .25s; }
+
+.cz-prevcol .desc { font-size: 12px; color: var(--muted); line-height: 1.4; }

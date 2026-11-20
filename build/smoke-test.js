@@ -98,8 +98,8 @@ const shot = async (win, name) => { await win.evaluate(() => { document.querySel
   await win.click('[data-view=library]'); await win.click('#new');
   await win.fill('#title', 'Smoke Test Poem'); await win.fill('#body', 'Roses grow by the garden wall,\nlistening to the evening call.');
   await win.click('#save'); await sleep(500);
-  await win.click('[data-view=customize]'); await sleep(400); await win.click('[data-theme=midnight]'); await sleep(400);
-  await win.click('[data-caret=block]'); await sleep(600);
+  await win.click('[data-view=customize]'); await sleep(400); await win.click('[data-tab=look]'); await sleep(300); await win.click('[data-theme=midnight]'); await sleep(400);
+  await win.click('[data-tab=cursor]'); await sleep(300); await win.click('[data-caret=block]'); await sleep(600);
   await shot(win, '06-customize');
   await win.click('[data-view=profile]'); await sleep(1300); await shot(win, '07-profile');
   await app.close(); await sleep(1500);

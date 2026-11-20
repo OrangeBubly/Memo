@@ -970,7 +970,7 @@ function typingMode(ctx, full, opts = {}) {
       <button class="btn small" id="restart">↻ Restart <span class="kbd">Esc</span></button>
     </div>
     <div class="ty-bar"><div id="tbar"></div></div>
-    <div class="typer ${opts.drill ? 'drill' : ''}" id="typer" data-vis="${vis}" tabindex="0">
+    <div class="typer ${opts.drill ? 'drill' : ''} ${tyLayoutClasses(opts)}" id="typer" data-vis="${vis}" tabindex="0">
       <div class="ty-inner" id="tinner">${body}<div class="${caretClasses(S().caretBlink === 'idle' ? 'idle' : '')}" id="caret"></div></div>
     </div>
     <div class="ty-help">${full
@@ -978,6 +978,9 @@ function typingMode(ctx, full, opts = {}) {
       : 'type the <b>first letter</b> of each word · <span class="kbd">tab</span> reveal word'}</div>`;
 
   const typer = $('#typer'), inner = $('#tinner'), caret = $('#caret');
+  const keepTyped = typer.classList.contains('keep');
+  if (!opts.drill) stage.classList.toggle('ty-vmid', S().tyVAlign === 'middle');
+  cleanup.push(() => { document.body.classList.remove('ty-faded'); stage.classList.remove('ty-vmid'); });
   const wordEl = $$('.tw', inner);
 
   function renderWord(i) {
@@ -1025,7 +1028,13 @@ function typingMode(ctx, full, opts = {}) {
     caret.style.transition = instant ? 'none' : '';
     const w = idx < letters.length ? r.width : (letters[letters.length - 1].getBoundingClientRect().width);
     placeCaret(caret, x - ir.left, y, w, r.height);
-    // keep the caret's line as the second visible line
+    if (keepTyped) { // typed text stays on screen: scroll the page (not the text) to follow the cursor
+      const main = $('#main'), cr = caret.getBoundingClientRect(), mr = main.getBoundingClientRect();
+      const target = mr.top + mr.height * 0.55;
+      if (cr.top > target || cr.top < mr.top + 40) main.scrollBy({ top: cr.top - target, behavior: instant ? 'auto' : 'smooth' });
+      caret.classList.remove('idle'); clearTimeout(caretIdleT); if (S().caretBlink === 'idle') caretIdleT = setTimeout(() => caret.classList.add('idle'), 600);
+      return;
+    }
     // Keep the previous visual line (even across a stanza gap) as the top visible line.
     const curTop = el.getBoundingClientRect().top - ir.top;
     let want = 0;
@@ -1069,7 +1078,7 @@ function typingMode(ctx, full, opts = {}) {
   }
 
   function finish() {
-    ended = true; caret.style.opacity = 0; updateStats();
+    ended = true; caret.style.opacity = 0; updateStats(); document.body.classList.remove('ty-faded');
     const secs = Math.max(1, (Date.now() - (startT || Date.now())) / 1000);
     const ok = res.filter(r => r === 'ok').length;
     const wpm = Math.round(ok / (secs / 60));
@@ -1100,6 +1109,7 @@ function typingMode(ctx, full, opts = {}) {
 
   setKeyHandler(e => {
     if (ended) return;
+    if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) tyFocusOn();
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
     if (e.key === 'Escape') { e.preventDefault(); return go('practice'); }
     if (e.key === 'Tab') { e.preventDefault(); return reveal(); }
